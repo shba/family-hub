@@ -1,0 +1,37 @@
+# Runs the whole POC (dashboard + WhatsApp gateway) with persistent volumes.
+# Useful for a full local test or a single VPS. Values come from a .env file.
+#
+#   docker compose up --build -d
+#   docker compose logs -f whatsapp   # scan the QR code here
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATA_DIR=/data
+      - APP_USERNAME=${APP_USERNAME:-}
+      - APP_PASSWORD=${APP_PASSWORD:-}
+      - API_TOKEN=${API_TOKEN:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+    volumes:
+      - hubdata:/data
+    restart: unless-stopped
+
+  whatsapp:
+    build: ./whatsapp
+    environment:
+      - API_URL=http://web:3000/api/extract
+      - API_TOKEN=${API_TOKEN:-}
+      - AUTH_DIR=/auth
+      - WA_GROUP=${WA_GROUP:-}
+    volumes:
+      - waauth:/auth
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  hubdata:
+  waauth:

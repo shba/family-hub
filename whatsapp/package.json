@@ -1,0 +1,15 @@
+{
+  "name": "family-hub-whatsapp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Optional read-only WhatsApp gateway (Baileys) that forwards group messages to the family-hub extractor.",
+  "scripts": {
+    "start": "node gateway.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.0",
+    "pino": "^9.0.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

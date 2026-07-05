@@ -1,0 +1,11 @@
+node_modules
+.next
+data
+public/uploads
+whatsapp/node_modules
+whatsapp/auth
+.git
+.env
+.env.local
+npm-debug.log*
+cloudflared.exe
