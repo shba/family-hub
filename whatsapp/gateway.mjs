@@ -28,6 +28,9 @@ const API_URL = process.env.API_URL || "http://localhost:3000/api/extract";
 const API_TOKEN = process.env.API_TOKEN || "";
 const AUTH_DIR = process.env.AUTH_DIR || "auth";
 const GROUP_FILTER = (process.env.WA_GROUP || "").trim();
+// If set (spare number, digits only incl. country code, e.g. 972501234567),
+// the gateway uses pairing-code login instead of a QR - easier from cloud logs.
+const WA_NUMBER = (process.env.WA_NUMBER || "").replace(/\D/g, "");
 const logger = pino({ level: "warn" });
 
 async function forward({ text, imageBase64, mime, sender }) {
@@ -73,11 +76,28 @@ async function start() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("connection.update", (update) => {
+  let pairingRequested = false;
+
+  sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
     if (qr) {
-      console.log("\nסרוק את קוד ה-QR עם הטלפון (הגדרות → מכשירים מקושרים):\n");
-      qrcode.generate(qr, { small: true });
+      if (WA_NUMBER && !sock.authState.creds.registered) {
+        if (!pairingRequested) {
+          pairingRequested = true;
+          try {
+            const code = await sock.requestPairingCode(WA_NUMBER);
+            console.log(
+              `\n🔑 קוד התאמה: ${code}\n   בטלפון: וואטסאפ → הגדרות → מכשירים מקושרים → קישור מכשיר → "קשר עם מספר טלפון" → הזן את הקוד\n`
+            );
+          } catch (err) {
+            console.error("Failed to request pairing code:", err.message);
+            pairingRequested = false;
+          }
+        }
+      } else {
+        console.log("\nסרוק את קוד ה-QR עם הטלפון (הגדרות → מכשירים מקושרים):\n");
+        qrcode.generate(qr, { small: true });
+      }
     }
     if (connection === "open") {
       console.log("\n✅ מחובר לוואטסאפ. מאזין להודעות בקבוצות...");
