@@ -46,32 +46,33 @@ const EMPTY: Omit<Extraction, "title" | "used_ai"> = {
 };
 
 export async function extract(input: ExtractInput): Promise<Extraction> {
-  // 1. OpenAI-compatible endpoint (e.g. NVIDIA integrate API serving Gemma).
+  const hasImage = !!input.imageBase64;
+  const gKey = process.env.GEMINI_API_KEY?.trim();
   const llmKey = process.env.LLM_API_KEY?.trim();
   const llmBase = process.env.LLM_BASE_URL?.trim();
-  if (llmKey && llmBase) {
+
+  const tryGemini = () => (gKey ? extractWithGemini(input, gKey) : null);
+  const tryLLM = () =>
+    llmKey && llmBase
+      ? extractWithOpenAI(input, {
+          key: llmKey,
+          baseUrl: llmBase,
+          model: process.env.LLM_MODEL?.trim() || "google/gemma-3n-e4b-it",
+        })
+      : null;
+
+  // For photos prefer Gemini (reliable vision); for text prefer the configured
+  // OpenAI-compatible model (e.g. NVIDIA Gemma). Fall through on failure.
+  const order = hasImage ? [tryGemini, tryLLM] : [tryLLM, tryGemini];
+  for (const provider of order) {
     try {
-      return await extractWithOpenAI(input, {
-        key: llmKey,
-        baseUrl: llmBase,
-        model: process.env.LLM_MODEL?.trim() || "google/gemma-3n-e4b-it",
-      });
+      const result = await provider();
+      if (result) return result;
     } catch (err) {
-      console.error("[llm] OpenAI-compatible extraction failed, using fallback:", err);
+      console.error("[extract] provider failed, trying next:", err);
     }
   }
 
-  // 2. Google Gemini API.
-  const key = process.env.GEMINI_API_KEY?.trim();
-  if (key) {
-    try {
-      return await extractWithGemini(input, key);
-    } catch (err) {
-      console.error("[gemini] extraction failed, using fallback:", err);
-    }
-  }
-
-  // 3. Offline heuristic (no key configured).
   return heuristicExtract(input);
 }
 
