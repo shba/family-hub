@@ -143,7 +143,7 @@ function parseJsonLoose(raw: string): Partial<Extraction> {
 }
 
 async function extractWithGemini(input: ExtractInput, key: string): Promise<Extraction> {
-  const model = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
+  const model = process.env.GEMINI_MODEL?.trim() || "gemini-flash-latest";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
   const today = todayStr();
