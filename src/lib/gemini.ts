@@ -1,5 +1,17 @@
 import { todayStr, addDays } from "./date";
 
+const REQUEST_TIMEOUT_MS = 35000;
+
+async function postWithTimeout(url: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export type ExtractType = "chore" | "bring" | "task" | "event";
 
 export interface Extraction {
@@ -94,7 +106,7 @@ async function extractWithOpenAI(
     max_tokens: 512,
   };
 
-  const res = await fetch(`${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+  const res = await postWithTimeout(`${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -148,7 +160,7 @@ async function extractWithGemini(input: ExtractInput, key: string): Promise<Extr
     generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
   };
 
-  const res = await fetch(url, {
+  const res = await postWithTimeout(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
