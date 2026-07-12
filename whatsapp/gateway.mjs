@@ -39,6 +39,7 @@ const logger = pino({ level: "warn" });
 // from a browser instead of the (often mangled) cloud logs.
 let latestQR = null;
 let connState = "starting";
+let lastClose = null; // last disconnect code/reason, shown on the page
 
 const HTTP_PORT = process.env.PORT || 8080;
 http
@@ -64,9 +65,12 @@ http
           ? `<h2>סריקת QR</h2><img src="/qr.png?ts=${Date.now()}" width="340" height="340" style="background:#fff;padding:12px;border-radius:12px"/><p>בטלפון: וואטסאפ → הגדרות → מכשירים מקושרים → קישור מכשיר</p>`
           : "<h2>ממתין לקוד QR...</h2><p>הדף מתרענן אוטומטית כל 5 שניות.</p>";
 
+      const closeLine = lastClose
+        ? `<p style="color:#f87171;margin-top:8px">קוד חיבור אחרון: ${lastClose}</p>`
+        : "";
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
-        `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="5"><title>WhatsApp Link</title></head><body style="font-family:sans-serif;text-align:center;background:#0b1120;color:#e5e7eb;padding:40px">${body}<p style="color:#64748b;margin-top:20px">סטטוס: ${connState}</p></body></html>`
+        `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="5"><title>WhatsApp Link</title></head><body style="font-family:sans-serif;text-align:center;background:#0b1120;color:#e5e7eb;padding:40px">${body}<p style="color:#64748b;margin-top:20px">סטטוס: ${connState}</p>${closeLine}</body></html>`
       );
     } catch (err) {
       res.writeHead(500);
@@ -153,6 +157,7 @@ async function start() {
       const reason = lastDisconnect?.error?.message || "";
       const loggedOut = statusCode === DisconnectReason.loggedOut;
       connState = loggedOut ? "logged-out" : "reconnecting";
+      lastClose = `code=${statusCode ?? "?"}${reason ? ", " + reason : ""}`;
       console.log(
         `החיבור נסגר (code=${statusCode ?? "?"}${reason ? ", " + reason : ""}).`,
         loggedOut ? "בוצע logout - נדרש קישור מחדש." : "מתחבר מחדש..."
