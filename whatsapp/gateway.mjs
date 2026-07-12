@@ -76,38 +76,39 @@ async function start() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  let pairingRequested = false;
-
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-    if (qr) {
-      if (WA_NUMBER && !sock.authState.creds.registered) {
-        if (!pairingRequested) {
-          pairingRequested = true;
-          try {
-            const code = await sock.requestPairingCode(WA_NUMBER);
-            console.log(
-              `\n🔑 קוד התאמה: ${code}\n   בטלפון: וואטסאפ → הגדרות → מכשירים מקושרים → קישור מכשיר → "קשר עם מספר טלפון" → הזן את הקוד\n`
-            );
-          } catch (err) {
-            console.error("Failed to request pairing code:", err.message);
-            pairingRequested = false;
-          }
-        }
-      } else {
-        console.log("\nסרוק את קוד ה-QR עם הטלפון (הגדרות → מכשירים מקושרים):\n");
-        qrcode.generate(qr, { small: true });
+  // Pairing-code login: request a code a few seconds after connecting.
+  if (WA_NUMBER && !sock.authState.creds.registered) {
+    setTimeout(async () => {
+      try {
+        const code = await sock.requestPairingCode(WA_NUMBER);
+        console.log(
+          `\n🔑 קוד התאמה: ${code}\n   בטלפון: וואטסאפ → הגדרות → מכשירים מקושרים → קישור מכשיר → "קשר עם מספר טלפון" → הזן את הקוד\n`
+        );
+      } catch (err) {
+        console.error("Failed to request pairing code:", err?.message || err);
       }
+    }, 3000);
+  }
+
+  sock.ev.on("connection.update", (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr && !WA_NUMBER) {
+      console.log("\nסרוק את קוד ה-QR עם הטלפון (הגדרות → מכשירים מקושרים):\n");
+      qrcode.generate(qr, { small: true });
     }
     if (connection === "open") {
       console.log("\n✅ מחובר לוואטסאפ. מאזין להודעות בקבוצות...");
       if (GROUP_FILTER) console.log(`   (מסונן לקבוצות שמכילות: "${GROUP_FILTER}")`);
     }
     if (connection === "close") {
-      const code = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = code !== DisconnectReason.loggedOut;
-      console.log("החיבור נסגר.", shouldReconnect ? "מתחבר מחדש..." : "בוצע logout.");
-      if (shouldReconnect) start();
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const reason = lastDisconnect?.error?.message || "";
+      const loggedOut = statusCode === DisconnectReason.loggedOut;
+      console.log(
+        `החיבור נסגר (code=${statusCode ?? "?"}${reason ? ", " + reason : ""}).`,
+        loggedOut ? "בוצע logout - נדרש קישור מחדש." : "מתחבר מחדש..."
+      );
+      if (!loggedOut) setTimeout(start, 3000);
     }
   });
 
