@@ -127,7 +127,7 @@ export default function InboxPage() {
             <span className="text-lg">✅</span>
             <span className="font-semibold">נוצר פריט לאישור</span>
             <span className="mr-auto rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
-              {result.extraction.used_ai ? "Gemini" : "מנתח מקומי (ללא מפתח API)"}
+              {result.extraction.used_ai ? "מודל AI" : "מנתח מקומי (ללא מפתח API)"}
             </span>
           </div>
           <dl className="mt-3 grid grid-cols-2 gap-y-2 text-sm">

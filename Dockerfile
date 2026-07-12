@@ -15,7 +15,7 @@ RUN npm run build
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-ENV PORT=3000
+# Bind to all interfaces; the platform (Railway) injects PORT at runtime.
 ENV HOSTNAME=0.0.0.0
 
 # Next.js standalone output contains a minimal server + traced node_modules.

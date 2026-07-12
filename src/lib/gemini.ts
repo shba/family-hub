@@ -34,6 +34,22 @@ const EMPTY: Omit<Extraction, "title" | "used_ai"> = {
 };
 
 export async function extract(input: ExtractInput): Promise<Extraction> {
+  // 1. OpenAI-compatible endpoint (e.g. NVIDIA integrate API serving Gemma).
+  const llmKey = process.env.LLM_API_KEY?.trim();
+  const llmBase = process.env.LLM_BASE_URL?.trim();
+  if (llmKey && llmBase) {
+    try {
+      return await extractWithOpenAI(input, {
+        key: llmKey,
+        baseUrl: llmBase,
+        model: process.env.LLM_MODEL?.trim() || "google/gemma-3n-e4b-it",
+      });
+    } catch (err) {
+      console.error("[llm] OpenAI-compatible extraction failed, using fallback:", err);
+    }
+  }
+
+  // 2. Google Gemini API.
   const key = process.env.GEMINI_API_KEY?.trim();
   if (key) {
     try {
@@ -42,7 +58,75 @@ export async function extract(input: ExtractInput): Promise<Extraction> {
       console.error("[gemini] extraction failed, using fallback:", err);
     }
   }
+
+  // 3. Offline heuristic (no key configured).
   return heuristicExtract(input);
+}
+
+async function extractWithOpenAI(
+  input: ExtractInput,
+  cfg: { key: string; baseUrl: string; model: string }
+): Promise<Extraction> {
+  const today = todayStr();
+  const prompt = buildPrompt(input.text ?? "", input.peopleNames, today, !!input.imageBase64);
+
+  const userContent: unknown = input.imageBase64
+    ? [
+        { type: "text", text: prompt },
+        {
+          type: "image_url",
+          image_url: { url: `data:${input.mime || "image/jpeg"};base64,${input.imageBase64}` },
+        },
+      ]
+    : prompt;
+
+  const body = {
+    model: cfg.model,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You extract structured data. Respond with ONLY valid minified JSON - no markdown fences, no explanations.",
+      },
+      { role: "user", content: userContent },
+    ],
+    temperature: 0.2,
+    max_tokens: 512,
+  };
+
+  const res = await fetch(`${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${cfg.key}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    throw new Error(`LLM HTTP ${res.status}: ${await res.text()}`);
+  }
+
+  const json = (await res.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  const raw = json.choices?.[0]?.message?.content;
+  if (!raw) throw new Error("Empty LLM response");
+
+  return normalize(parseJsonLoose(raw), true);
+}
+
+function parseJsonLoose(raw: string): Partial<Extraction> {
+  try {
+    return JSON.parse(raw) as Partial<Extraction>;
+  } catch {
+    /* try to salvage a JSON object from surrounding text/markdown */
+  }
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (match) {
+    return JSON.parse(match[0]) as Partial<Extraction>;
+  }
+  throw new Error("Could not parse JSON from model output");
 }
 
 async function extractWithGemini(input: ExtractInput, key: string): Promise<Extraction> {
@@ -80,8 +164,7 @@ async function extractWithGemini(input: ExtractInput, key: string): Promise<Extr
   const raw = json.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!raw) throw new Error("Empty Gemini response");
 
-  const parsed = JSON.parse(raw) as Partial<Extraction>;
-  return normalize(parsed, true);
+  return normalize(parseJsonLoose(raw), true);
 }
 
 function buildPrompt(text: string, names: string[], today: string, hasImage: boolean): string {
