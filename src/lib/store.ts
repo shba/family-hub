@@ -1,8 +1,10 @@
 import fs from "fs";
 import path from "path";
 import { seedInto } from "./seed";
-import { todayStr } from "./date";
 import type { Person, Meal, Task, ClassItem, Grocery, Media, EventItem } from "./types";
+
+// Bump this to force a clean reseed (wipes stored data on next load/redeploy).
+const SEED_VERSION = 2;
 
 export interface MessageRow {
   id: number;
@@ -14,6 +16,7 @@ export interface MessageRow {
 
 export interface StoreData {
   _seq: number;
+  _seedVersion?: number;
   people: Person[];
   meals: Meal[];
   tasks: Task[];
@@ -44,55 +47,22 @@ function emptyStore(): StoreData {
   };
 }
 
-// Generates each person's timed agenda for today. Idempotent: only runs when
-// there are no events for today yet, so it also backfills existing data files.
-function ensureEventsForToday(store: StoreData): boolean {
-  const today = todayStr();
-  if (store.events.some((e) => e.date === today)) return false;
-
-  const find = (needle: string) => store.people.find((p) => p.name.includes(needle));
-  const add = (
-    person: Person | undefined,
-    title: string,
-    time: string,
-    end_time: string | null = null
-  ) => {
-    if (!person) return;
-    store._seq += 1;
-    store.events.push({ id: store._seq, person_id: person.id, date: today, title, time, end_time });
-  };
-
-  const maya = find("מאיה");
-  const itai = find("איתי");
-  const mom = find("אמא");
-  const dad = find("אבא");
-
-  add(maya, "בית ספר", "08:00", "13:15");
-  add(maya, "חוג העשרה", "14:00");
-  add(itai, "בית ספר", "08:00", "13:15");
-  add(itai, "שיעור עזר במתמטיקה", "14:30");
-  add(mom, "פגישת צוות בעבודה", "10:00");
-  add(mom, "איסוף הילדים מהחוגים", "16:30");
-  add(dad, "ישיבת בוקר", "09:00");
-  add(dad, "אימון בחדר כושר", "19:00");
-
-  return store.events.length > 0;
-}
-
 function load(): StoreData {
   try {
     if (fs.existsSync(dbFile)) {
       const parsed = JSON.parse(fs.readFileSync(dbFile, "utf8")) as StoreData;
-      const merged = { ...emptyStore(), ...parsed };
-      if (ensureEventsForToday(merged)) save(merged);
-      return merged;
+      // Keep existing data only if it matches the current seed version.
+      if (parsed._seedVersion === SEED_VERSION) {
+        return { ...emptyStore(), ...parsed };
+      }
+      console.log("[store] seed version changed - resetting data.");
     }
   } catch (err) {
     console.error("[store] failed to read data file, reseeding:", err);
   }
   const fresh = emptyStore();
   seedInto(fresh);
-  ensureEventsForToday(fresh);
+  fresh._seedVersion = SEED_VERSION;
   save(fresh);
   return fresh;
 }
