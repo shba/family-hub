@@ -21,6 +21,8 @@ import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   downloadMediaMessage,
+  fetchLatestBaileysVersion,
+  Browsers,
 } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import QRImage from "qrcode";
@@ -118,7 +120,17 @@ function extractText(msg) {
 
 async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const sock = makeWASocket({ auth: state, logger, printQRInTerminal: false });
+  // Fetch the current WhatsApp Web version so the handshake isn't rejected as
+  // "client outdated" (a common cause of the 405 Connection Failure).
+  const { version, isLatest } = await fetchLatestBaileysVersion();
+  console.log(`WhatsApp Web version ${version.join(".")} (isLatest=${isLatest})`);
+  const sock = makeWASocket({
+    version,
+    browser: Browsers.ubuntu("Chrome"),
+    auth: state,
+    logger,
+    printQRInTerminal: false,
+  });
 
   sock.ev.on("creds.update", saveCreds);
 
