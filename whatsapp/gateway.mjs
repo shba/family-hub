@@ -43,6 +43,7 @@ const logger = pino({ level: "warn" });
 let latestQR = null;
 let connState = "starting";
 let lastClose = null; // last disconnect code/reason, shown on the page
+let reconnectDelay = 3000; // grows with backoff to avoid throttling (503)
 
 const HTTP_PORT = process.env.PORT || 8080;
 http
@@ -162,6 +163,7 @@ async function start() {
     if (connection === "open") {
       connState = "open";
       latestQR = null;
+      reconnectDelay = 3000; // reset backoff on success
       console.log("\n✅ מחובר לוואטסאפ. מאזין להודעות בקבוצות...");
       if (GROUP_FILTER) console.log(`   (מסונן לקבוצות שמכילות: "${GROUP_FILTER}")`);
     }
@@ -184,9 +186,13 @@ async function start() {
           console.error("auth cleanup failed:", e?.message || e);
         }
         connState = "reconnecting";
-        setTimeout(start, 2000);
-      } else {
+        reconnectDelay = 3000;
         setTimeout(start, 3000);
+      } else {
+        // Back off to avoid WhatsApp throttling (503 Stream Errored).
+        console.log(`ניסיון חיבור מחדש בעוד ${Math.round(reconnectDelay / 1000)} שניות...`);
+        setTimeout(start, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 60000);
       }
     }
   });
