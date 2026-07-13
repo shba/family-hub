@@ -163,9 +163,17 @@ function TopBar({ state, now }: { state: DashboardState; now: Date }) {
           <div className="mt-1 text-slate-300">☀️ 28°C · תל אביב</div>
         </div>
       </div>
-      <div className="mt-3 rounded-xl bg-sky-500/10 px-4 py-3 text-sky-100 ring-1 ring-sky-500/20">
-        <span className="ml-2">🤖</span>
-        {state.summary}
+      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex-1 rounded-xl bg-sky-500/10 px-4 py-3 text-sky-100 ring-1 ring-sky-500/20">
+          <span className="ml-2">🤖</span>
+          {state.summary}
+        </div>
+        <Link
+          href="/inbox"
+          className="shrink-0 rounded-xl bg-sky-600 px-5 py-3 text-center font-medium hover:bg-sky-500"
+        >
+          ➕ הוסף משימה / תמונה
+        </Link>
       </div>
     </Tile>
   );
