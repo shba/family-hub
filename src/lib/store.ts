@@ -3,9 +3,6 @@ import path from "path";
 import { seedInto } from "./seed";
 import type { Person, Meal, Task, ClassItem, Grocery, Media, EventItem } from "./types";
 
-// Bump this to force a clean reseed (wipes stored data on next load/redeploy).
-const SEED_VERSION = 2;
-
 export interface MessageRow {
   id: number;
   source: string;
@@ -50,19 +47,16 @@ function emptyStore(): StoreData {
 function load(): StoreData {
   try {
     if (fs.existsSync(dbFile)) {
+      // Always keep existing data - updates must never wipe it.
       const parsed = JSON.parse(fs.readFileSync(dbFile, "utf8")) as StoreData;
-      // Keep existing data only if it matches the current seed version.
-      if (parsed._seedVersion === SEED_VERSION) {
-        return { ...emptyStore(), ...parsed };
-      }
-      console.log("[store] seed version changed - resetting data.");
+      return { ...emptyStore(), ...parsed };
     }
   } catch (err) {
-    console.error("[store] failed to read data file, reseeding:", err);
+    console.error("[store] failed to read data file:", err);
   }
+  // Only seed when there's no data file yet.
   const fresh = emptyStore();
   seedInto(fresh);
-  fresh._seedVersion = SEED_VERSION;
   save(fresh);
   return fresh;
 }
