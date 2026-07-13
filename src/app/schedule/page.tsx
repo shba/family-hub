@@ -29,7 +29,7 @@ export default function SchedulePage() {
   const [data, setData] = useState<Upcoming | null>(null);
 
   useEffect(() => {
-    fetch("/api/upcoming?days=90")
+    fetch("/api/upcoming?days=365")
       .then((r) => r.json())
       .then(setData)
       .catch(() => setData(null));
@@ -64,7 +64,7 @@ export default function SchedulePage() {
           ← חזרה ללוח היומי
         </Link>
       </div>
-      <p className="mt-2 text-sm text-slate-400">אירועים ומשימות מהיום ועד 90 יום קדימה.</p>
+      <p className="mt-2 text-sm text-slate-400">אירועים ומשימות מהיום ועד שנה קדימה.</p>
 
       {dates.length === 0 ? (
         <div className="mt-6 rounded-2xl border border-slate-700/60 bg-slate-900/50 p-6 text-center text-slate-400">

@@ -49,7 +49,6 @@ const EMPTY: Omit<Extraction, "title" | "used_ai"> = {
 };
 
 export async function extract(input: ExtractInput): Promise<Extraction> {
-  const hasImage = !!input.imageBase64;
   const gKey = process.env.GEMINI_API_KEY?.trim();
   const llmKey = process.env.LLM_API_KEY?.trim();
   const llmBase = process.env.LLM_BASE_URL?.trim();
@@ -64,9 +63,9 @@ export async function extract(input: ExtractInput): Promise<Extraction> {
         })
       : null;
 
-  // For photos prefer Gemini (reliable vision); for text prefer the configured
-  // OpenAI-compatible model (e.g. NVIDIA Gemma). Fall through on failure.
-  const order = hasImage ? [tryGemini, tryLLM] : [tryLLM, tryGemini];
+  // Prefer Gemini (stronger at vision + long structured lists like fixtures);
+  // fall back to the OpenAI-compatible model (NVIDIA Gemma) on failure.
+  const order = [tryGemini, tryLLM];
   for (const provider of order) {
     try {
       const result = await provider();
@@ -209,7 +208,7 @@ function buildPrompt(text: string, names: string[], today: string, hasImage: boo
   "confidence": number
 }`,
     'הנחיות: "bring" = פריטים שצריך להביא לבית הספר. "grocery" = פריטים לקנייה בסופר. אם זו בקשה כללית השתמש ב-type="task". שמור על הכיתוב בעברית.',
-    'אם מבקשים להוסיף לוח זמנים / רשימת אירועים או משחקים (למשל "כל משחקי המונדיאל"), החזר כל אירוע בנפרד בתוך "events" עם תאריך (YYYY-MM-DD) ושעה. במקרה כזה אפשר להשאיר את "type"="event" ואת שאר השדות ריקים. החזר עד 60 אירועים לכל היותר.',
+    'אם מבקשים להוסיף לוח זמנים / רשימת אירועים או משחקים (למשל "כל משחקי המונדיאל"), החזר כל פריט בנפרד בתוך "events" עם תאריך (YYYY-MM-DD) ושעה. חובה לפרק לרשימה - אסור להחזיר אירוע סיכום יחיד כמו "כל המשחקים". אם אינך יודע את התאריכים המדויקים, החזר בכל זאת כל משחק בנפרד עם ההערכה הטובה ביותר (יריבים + תאריך + שעה). החזר עד 60 אירועים לכל היותר.',
     text ? `ההודעה: """${text}"""` : "אין טקסט - נתח מהתמונה.",
   ]
     .filter(Boolean)
