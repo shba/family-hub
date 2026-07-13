@@ -28,6 +28,8 @@ import makeWASocket, {
 import qrcode from "qrcode-terminal";
 import QRImage from "qrcode";
 import pino from "pino";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { SocksProxyAgent } from "socks-proxy-agent";
 
 const API_URL = process.env.API_URL || "http://localhost:3000/api/extract";
 const API_TOKEN = process.env.API_TOKEN || "";
@@ -36,7 +38,17 @@ const GROUP_FILTER = (process.env.WA_GROUP || "").trim();
 // If set (spare number, digits only incl. country code, e.g. 972501234567),
 // the gateway uses pairing-code login instead of a QR - easier from cloud logs.
 const WA_NUMBER = (process.env.WA_NUMBER || "").replace(/\D/g, "");
+// Optional proxy so the WhatsApp connection egresses via a residential/mobile IP
+// (needed because WhatsApp rejects datacenter IPs). Supports http(s):// and socks://.
+const PROXY_URL = (process.env.PROXY_URL || "").trim();
 const logger = pino({ level: "warn" });
+
+function makeProxyAgent() {
+  if (!PROXY_URL) return undefined;
+  return PROXY_URL.startsWith("socks")
+    ? new SocksProxyAgent(PROXY_URL)
+    : new HttpsProxyAgent(PROXY_URL);
+}
 
 // Live connection state, exposed on a small web page so you can scan the QR
 // from a browser instead of the (often mangled) cloud logs.
@@ -126,12 +138,15 @@ async function start() {
   // "client outdated" (a common cause of the 405 Connection Failure).
   const { version, isLatest } = await fetchLatestBaileysVersion();
   console.log(`WhatsApp Web version ${version.join(".")} (isLatest=${isLatest})`);
+  const agent = makeProxyAgent();
+  if (agent) console.log(`Using proxy: ${PROXY_URL.replace(/:[^:@/]+@/, ":****@")}`);
   const sock = makeWASocket({
     version,
     browser: Browsers.ubuntu("Chrome"),
     auth: state,
     logger,
     printQRInTerminal: false,
+    ...(agent ? { agent, fetchAgent: agent } : {}),
   });
 
   sock.ev.on("creds.update", saveCreds);
