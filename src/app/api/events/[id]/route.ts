@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { confirmEvent, deleteEvent } from "@/lib/queries";
+import { confirmEvent, deleteEvent, setEventParticipants } from "@/lib/queries";
 
 export const runtime = "nodejs";
 
 export async function PATCH(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  confirmEvent(Number(id));
+  const body = await req.json().catch(() => ({}));
+  if (Array.isArray(body?.participants)) {
+    setEventParticipants(Number(id), body.participants.map(Number));
+  } else {
+    confirmEvent(Number(id));
+  }
   return NextResponse.json({ ok: true });
 }
 

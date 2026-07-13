@@ -12,6 +12,7 @@ import type {
   ClassItem,
   EventItem,
 } from "@/lib/types";
+import { eventParticipants } from "@/lib/types";
 import { colorOf } from "@/lib/colors";
 import { HEB_WEEKDAYS_SHORT, HEB_WEEKDAYS, HEB_MONTHS } from "@/lib/date";
 
@@ -202,7 +203,7 @@ function PersonCard({
 
   const schedule = [
     ...state.events
-      .filter((e) => e.person_id === person.id)
+      .filter((e) => eventParticipants(e).includes(person.id))
       .map((e) => ({ id: `e${e.id}`, time: e.time, title: e.title, end: e.end_time })),
     ...state.classes
       .filter((cl) => cl.person_id === person.id && cl.weekday === state.weekday)

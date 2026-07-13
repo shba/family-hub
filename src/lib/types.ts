@@ -61,13 +61,20 @@ export interface Media {
 
 export interface EventItem {
   id: number;
-  person_id: number | null;
+  person_id: number | null; // legacy single owner (kept for back-compat)
+  participants?: number[]; // people involved; [] = whole family / general
   date: string;
   title: string;
   time: string | null;
   end_time: string | null;
   status?: TaskStatus; // undefined = confirmed (back-compat with seeded data)
   source?: string;
+}
+
+// Participants of an event, tolerant of legacy records that only had person_id.
+export function eventParticipants(e: EventItem): number[] {
+  if (e.participants && e.participants.length) return e.participants;
+  return e.person_id != null ? [e.person_id] : [];
 }
 
 export interface EventDraft {

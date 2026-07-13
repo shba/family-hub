@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     switch (item.kind) {
       case "event":
         createEvent({
-          person_id: person?.id ?? null,
+          participants: person ? [person.id] : [],
           title: item.title,
           date: item.date ?? undefined,
           time: item.time ?? null,

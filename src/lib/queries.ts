@@ -168,7 +168,8 @@ export function addMeal(input: {
 }
 
 export function createEvent(input: {
-  person_id: number | null;
+  person_id?: number | null;
+  participants?: number[];
   title: string;
   date?: string;
   time?: string | null;
@@ -177,9 +178,12 @@ export function createEvent(input: {
   source?: string;
 }): number {
   const id = nextId();
+  const participants =
+    input.participants ?? (input.person_id != null ? [input.person_id] : []);
   store.events.push({
     id,
-    person_id: input.person_id,
+    person_id: participants[0] ?? null,
+    participants,
     title: input.title,
     date: input.date ?? todayStr(),
     time: input.time ?? null,
@@ -189,6 +193,15 @@ export function createEvent(input: {
   });
   persist();
   return id;
+}
+
+export function setEventParticipants(id: number, participants: number[]): void {
+  const e = store.events.find((x) => x.id === id);
+  if (e) {
+    e.participants = participants;
+    e.person_id = participants[0] ?? null;
+    persist();
+  }
 }
 
 export function confirmEvent(id: number): void {
