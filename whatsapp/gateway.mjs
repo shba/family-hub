@@ -17,6 +17,7 @@
 // There is a small risk the number gets banned. Use a throwaway number.
 
 import http from "http";
+import fs from "fs";
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -172,9 +173,21 @@ async function start() {
       lastClose = `code=${statusCode ?? "?"}${reason ? ", " + reason : ""}`;
       console.log(
         `החיבור נסגר (code=${statusCode ?? "?"}${reason ? ", " + reason : ""}).`,
-        loggedOut ? "בוצע logout - נדרש קישור מחדש." : "מתחבר מחדש..."
+        loggedOut ? "בוצע logout - מנקה מצב ומתחיל מחדש..." : "מתחבר מחדש..."
       );
-      if (!loggedOut) setTimeout(start, 3000);
+      if (loggedOut) {
+        // 401/logged-out during pairing usually means stale auth state.
+        // Wipe it so a clean session + fresh QR is produced.
+        try {
+          fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+        } catch (e) {
+          console.error("auth cleanup failed:", e?.message || e);
+        }
+        connState = "reconnecting";
+        setTimeout(start, 2000);
+      } else {
+        setTimeout(start, 3000);
+      }
     }
   });
 
