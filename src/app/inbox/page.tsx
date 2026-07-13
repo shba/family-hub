@@ -19,6 +19,9 @@ const KIND_LABEL: Record<PlannedItem["kind"], string> = {
   meal: "🍽️ ארוחה",
 };
 
+const SLOT_LABEL: Record<string, string> = { breakfast: "בוקר", lunch: "צהריים", dinner: "ערב" };
+const WD_SHORT = ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"];
+
 export default function InboxPage() {
   const [text, setText] = useState("");
   const [image, setImage] = useState<string | null>(null);
@@ -184,7 +187,13 @@ export default function InboxPage() {
                   <span className="flex-1">
                     {it.title}
                     {it.person_name && <span className="mr-1 text-slate-400">· {it.person_name}</span>}
-                    {(it.date || it.time) && (
+                    {it.kind === "meal" && it.slot && (
+                      <span className="mr-1 text-slate-400">· {SLOT_LABEL[it.slot] ?? it.slot}</span>
+                    )}
+                    {it.weekday != null && (
+                      <span className="mr-1 text-slate-400">· יום {WD_SHORT[it.weekday]}</span>
+                    )}
+                    {(it.date || it.time) && it.weekday == null && (
                       <span className="mr-1 text-slate-400 tabular-nums">
                         · {it.date ?? "היום"}
                         {it.time ? ` ${it.time}` : ""}

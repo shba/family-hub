@@ -1,5 +1,5 @@
 import { todayStr, addDays } from "./date";
-import type { EventDraft, PlannedItem, MealSlot } from "./types";
+import type { PlannedItem, MealSlot } from "./types";
 
 const REQUEST_TIMEOUT_MS = 35000;
 
@@ -13,18 +13,8 @@ async function postWithTimeout(url: string, options: RequestInit): Promise<Respo
   }
 }
 
-export type ExtractType = "chore" | "bring" | "task" | "event";
-
 export interface Extraction {
-  person_name: string | null;
-  type: ExtractType;
-  title: string;
-  date: string | null; // YYYY-MM-DD
-  time: string | null;
-  bring: string[];
-  grocery: string[];
-  meal: { slot: "breakfast" | "lunch" | "dinner"; description: string } | null;
-  events: EventDraft[]; // multiple timed items (e.g. a games/fixture schedule)
+  items: PlannedItem[];
   confidence: number;
   used_ai: boolean;
 }
@@ -35,18 +25,6 @@ interface ExtractInput {
   mime?: string;
   peopleNames: string[];
 }
-
-const EMPTY: Omit<Extraction, "title" | "used_ai"> = {
-  person_name: null,
-  type: "task",
-  date: null,
-  time: null,
-  bring: [],
-  grocery: [],
-  meal: null,
-  events: [],
-  confidence: 0,
-};
 
 export async function extract(input: ExtractInput): Promise<Extraction> {
   const gKey = process.env.GEMINI_API_KEY?.trim();
@@ -63,10 +41,9 @@ export async function extract(input: ExtractInput): Promise<Extraction> {
         })
       : null;
 
-  // Prefer Gemini (stronger at vision + long structured lists like fixtures);
-  // fall back to the OpenAI-compatible model (NVIDIA Gemma) on failure.
-  const order = [tryGemini, tryLLM];
-  for (const provider of order) {
+  // Prefer Gemini (stronger at vision + structured lists); fall back to the
+  // OpenAI-compatible model (NVIDIA Gemma), then an offline heuristic.
+  for (const provider of [tryGemini, tryLLM]) {
     try {
       const result = await provider();
       if (result) return result;
@@ -74,17 +51,74 @@ export async function extract(input: ExtractInput): Promise<Extraction> {
       console.error("[extract] provider failed, trying next:", err);
     }
   }
-
   return heuristicExtract(input);
+}
+
+function buildPrompt(text: string, names: string[], today: string, hasImage: boolean): string {
+  return [
+    "אתה עוזר משפחתי שממיר הודעות/תמונות (למשל לוח מטלות או תפריט שבועי) לרשימת פריטים מובנית.",
+    hasImage ? "נתח היטב את התמונה המצורפת, כולל כותרות עמודות/מקטעים." : "",
+    `התאריך היום הוא ${today}. "מחר" = היום+1 (פורמט YYYY-MM-DD).`,
+    `בני המשפחה: ${names.join(", ")}. שייך כל פריט לאדם לפי שם או לפי כותרת המקטע/עמודה (למשל מטלה תחת "מאור" -> person_name="מאור"; תחת "כולם" -> person_name=null).`,
+    "מיפוי ימים לעמודות: יום א'=0, יום ב'=1, יום ג'=2, יום ד'=3, יום ה'=4, יום ו'=5, שבת=6.",
+    "החזר JSON תקין בלבד במבנה:",
+    `{
+  "items": [
+    { "kind": "task"|"event"|"bring"|"grocery"|"meal",
+      "title": string,
+      "person_name": string|null,
+      "date": string|null,
+      "weekday": number|null,
+      "time": string|null,
+      "slot": "breakfast"|"lunch"|"dinner"|null }
+  ],
+  "confidence": number
+}`,
+    "כללי סיווג:",
+    '- "task" = מטלה/משימה, כולל מטלות בית (קיפול, סידור, פינוי/מילוי מדיח, שאיבה, האכלה וכו").',
+    '- "event" = דבר עם שעה או תאריך ספציפי (פגישה, חוג, משחק).',
+    '- "meal" = פריט מתוך תפריט/ארוחות. חובה למלא "slot" (בוקר=breakfast, צהריים=lunch, ערב=dinner) ו-"weekday" לפי עמודת היום. תפריט משפחתי כללי -> person_name=null.',
+    '- "bring" = מה להביא. "grocery" = קניות.',
+    "פרק כל תא/שורה לפריט נפרד. אל תאחד רשימה לפריט סיכום יחיד. החזר עד 80 פריטים.",
+    text ? `הטקסט: """${text}"""` : "אין טקסט - נתח מהתמונה.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function extractWithGemini(input: ExtractInput, key: string): Promise<Extraction> {
+  const model = process.env.GEMINI_MODEL?.trim() || "gemini-flash-latest";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+  const prompt = buildPrompt(input.text ?? "", input.peopleNames, todayStr(), !!input.imageBase64);
+
+  const parts: Record<string, unknown>[] = [{ text: prompt }];
+  if (input.imageBase64) {
+    parts.push({ inline_data: { mime_type: input.mime || "image/jpeg", data: input.imageBase64 } });
+  }
+
+  const res = await postWithTimeout(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 8192 },
+    }),
+  });
+  if (!res.ok) throw new Error(`Gemini HTTP ${res.status}: ${await res.text()}`);
+
+  const json = (await res.json()) as {
+    candidates?: { content?: { parts?: { text?: string }[] } }[];
+  };
+  const raw = json.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!raw) throw new Error("Empty Gemini response");
+  return normalize(parseJsonLoose(raw), true);
 }
 
 async function extractWithOpenAI(
   input: ExtractInput,
   cfg: { key: string; baseUrl: string; model: string }
 ): Promise<Extraction> {
-  const today = todayStr();
-  const prompt = buildPrompt(input.text ?? "", input.peopleNames, today, !!input.imageBase64);
-
+  const prompt = buildPrompt(input.text ?? "", input.peopleNames, todayStr(), !!input.imageBase64);
   const userContent: unknown = input.imageBase64
     ? [
         { type: "text", text: prompt },
@@ -95,242 +129,100 @@ async function extractWithOpenAI(
       ]
     : prompt;
 
-  const body = {
-    model: cfg.model,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You extract structured data. Respond with ONLY valid minified JSON - no markdown fences, no explanations.",
-      },
-      { role: "user", content: userContent },
-    ],
-    temperature: 0.2,
-    max_tokens: 4096,
-  };
-
   const res = await postWithTimeout(`${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${cfg.key}`,
-    },
-    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.key}` },
+    body: JSON.stringify({
+      model: cfg.model,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You extract structured data. Respond with ONLY valid minified JSON - no markdown, no prose.",
+        },
+        { role: "user", content: userContent },
+      ],
+      temperature: 0.2,
+      max_tokens: 4096,
+    }),
   });
+  if (!res.ok) throw new Error(`LLM HTTP ${res.status}: ${await res.text()}`);
 
-  if (!res.ok) {
-    throw new Error(`LLM HTTP ${res.status}: ${await res.text()}`);
-  }
-
-  const json = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
   const raw = json.choices?.[0]?.message?.content;
   if (!raw) throw new Error("Empty LLM response");
-
   return normalize(parseJsonLoose(raw), true);
 }
 
-function parseJsonLoose(raw: string): Partial<Extraction> {
+function parseJsonLoose(raw: string): { items?: unknown[]; confidence?: number } {
   try {
-    return JSON.parse(raw) as Partial<Extraction>;
+    return JSON.parse(raw);
   } catch {
-    /* try to salvage a JSON object from surrounding text/markdown */
+    /* try to salvage */
   }
   const match = raw.match(/\{[\s\S]*\}/);
-  if (match) {
-    return JSON.parse(match[0]) as Partial<Extraction>;
-  }
+  if (match) return JSON.parse(match[0]);
   throw new Error("Could not parse JSON from model output");
 }
 
-async function extractWithGemini(input: ExtractInput, key: string): Promise<Extraction> {
-  const model = process.env.GEMINI_MODEL?.trim() || "gemini-flash-latest";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+const KINDS = ["event", "task", "bring", "grocery", "meal"] as const;
 
-  const today = todayStr();
-  const prompt = buildPrompt(input.text ?? "", input.peopleNames, today, !!input.imageBase64);
-
-  const parts: Record<string, unknown>[] = [{ text: prompt }];
-  if (input.imageBase64) {
-    parts.push({
-      inline_data: { mime_type: input.mime || "image/jpeg", data: input.imageBase64 },
-    });
-  }
-
-  const body = {
-    contents: [{ parts }],
-    generationConfig: {
-      responseMimeType: "application/json",
-      temperature: 0.2,
-      maxOutputTokens: 8192,
-    },
-  };
-
-  const res = await postWithTimeout(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Gemini HTTP ${res.status}: ${await res.text()}`);
-  }
-
-  const json = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
-  };
-  const raw = json.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!raw) throw new Error("Empty Gemini response");
-
-  return normalize(parseJsonLoose(raw), true);
-}
-
-function buildPrompt(text: string, names: string[], today: string, hasImage: boolean): string {
-  return [
-    "אתה עוזר משפחתי שמחלץ משימות מהודעות וואטסאפ או מתמונות (למשל בקשות ממורים).",
-    hasImage
-      ? "נתחת גם את התמונה המצורפת (טקסט/הודעה שצולמה)."
-      : "",
-    `התאריך היום הוא ${today}. אם ההודעה מזכירה "מחר" חשב את התאריך בהתאם (פורמט YYYY-MM-DD).`,
-    `בני המשפחה האפשריים: ${names.join(", ")}. אם ניתן, שייך את המשימה לאדם המתאים לפי השם או ההקשר (למשל "מאיה", "כיתת מאיה").`,
-    "החזר JSON תקין בלבד, במבנה הבא:",
-    `{
-  "person_name": string|null,
-  "type": "chore"|"bring"|"task"|"event",
-  "title": string,
-  "date": string|null,
-  "time": string|null,
-  "bring": string[],
-  "grocery": string[],
-  "meal": {"slot":"breakfast"|"lunch"|"dinner","description":string}|null,
-  "events": [{"title": string, "date": string|null, "time": string|null, "person_name": string|null}],
-  "confidence": number
-}`,
-    'הנחיות: "bring" = פריטים שצריך להביא לבית הספר. "grocery" = פריטים לקנייה בסופר. אם זו בקשה כללית השתמש ב-type="task". שמור על הכיתוב בעברית.',
-    'אם מבקשים להוסיף לוח זמנים / רשימת אירועים או משחקים (למשל "כל משחקי המונדיאל"), החזר כל פריט בנפרד בתוך "events" עם תאריך (YYYY-MM-DD) ושעה. חובה לפרק לרשימה - אסור להחזיר אירוע סיכום יחיד כמו "כל המשחקים". אם אינך יודע את התאריכים המדויקים, החזר בכל זאת כל משחק בנפרד עם ההערכה הטובה ביותר (יריבים + תאריך + שעה). החזר עד 60 אירועים לכל היותר.',
-    text ? `ההודעה: """${text}"""` : "אין טקסט - נתח מהתמונה.",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function normalize(p: Partial<Extraction>, usedAi: boolean): Extraction {
+function validateItem(raw: unknown): PlannedItem | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const title = String(r.title ?? "").trim().slice(0, 200);
+  if (!title) return null;
+  const kind = (KINDS as readonly string[]).includes(String(r.kind))
+    ? (r.kind as PlannedItem["kind"])
+    : "task";
+  const slot =
+    r.slot === "breakfast" || r.slot === "lunch" || r.slot === "dinner"
+      ? (r.slot as MealSlot)
+      : null;
   return {
-    person_name: p.person_name ?? null,
-    type: (p.type as ExtractType) ?? "task",
-    title: (p.title ?? "").toString().slice(0, 200) || "משימה חדשה",
-    date: p.date ?? null,
-    time: p.time ?? null,
-    bring: Array.isArray(p.bring) ? p.bring.map(String) : [],
-    grocery: Array.isArray(p.grocery) ? p.grocery.map(String) : [],
-    meal: p.meal && p.meal.slot ? { slot: p.meal.slot, description: String(p.meal.description ?? "") } : null,
-    events: Array.isArray(p.events)
-      ? p.events
-          .filter((e) => e && (e.title || e.date || e.time))
-          .slice(0, 60)
-          .map((e) => ({
-            title: String(e.title ?? "").slice(0, 200) || "אירוע",
-            date: e.date ?? null,
-            time: e.time ?? null,
-            person_name: e.person_name ?? null,
-          }))
-      : [],
-    confidence: typeof p.confidence === "number" ? p.confidence : usedAi ? 0.7 : 0.3,
+    kind,
+    title,
+    person_name: r.person_name ? String(r.person_name) : null,
+    date: r.date ? String(r.date) : null,
+    time: r.time ? String(r.time) : null,
+    weekday: typeof r.weekday === "number" ? r.weekday : null,
+    slot,
+  };
+}
+
+function normalize(parsed: { items?: unknown[]; confidence?: number }, usedAi: boolean): Extraction {
+  const items = Array.isArray(parsed.items)
+    ? parsed.items.map(validateItem).filter((x): x is PlannedItem => x !== null).slice(0, 80)
+    : [];
+  return {
+    items,
+    confidence: typeof parsed.confidence === "number" ? parsed.confidence : usedAi ? 0.7 : 0.3,
     used_ai: usedAi,
   };
 }
 
-// Flattens an extraction into the concrete actions to preview/create.
 export function toPlannedItems(ex: Extraction): PlannedItem[] {
-  const items: PlannedItem[] = [];
-
-  for (const e of ex.events) {
-    items.push({
-      kind: "event",
-      title: e.title,
-      person_name: e.person_name,
-      date: e.date,
-      time: e.time,
-    });
-  }
-
-  // Only treat the single main item as its own action when there isn't a
-  // dedicated events[] list (otherwise it's just a wrapper for the list).
-  if (ex.events.length === 0 && ex.title) {
-    items.push({
-      kind: ex.type === "event" ? "event" : ex.type === "bring" ? "bring" : "task",
-      title: ex.title,
-      person_name: ex.person_name,
-      date: ex.date,
-      time: ex.time,
-    });
-  }
-
-  for (const b of ex.bring) {
-    items.push({ kind: "bring", title: b, person_name: ex.person_name, date: ex.date, time: null });
-  }
-  for (const g of ex.grocery) {
-    items.push({ kind: "grocery", title: g, person_name: null, date: null, time: null });
-  }
-  if (ex.meal) {
-    items.push({
-      kind: "meal",
-      title: ex.meal.description,
-      person_name: ex.person_name,
-      date: ex.date,
-      time: null,
-      slot: ex.meal.slot as MealSlot,
-    });
-  }
-
-  return items;
+  return ex.items;
 }
 
-// Very small offline parser so the demo works with no API key.
+// Minimal offline parser (no API key) - one item from the text.
 function heuristicExtract(input: ExtractInput): Extraction {
   const text = (input.text ?? "").trim();
-  const lower = text.toLowerCase();
-
-  let date: string | null = null;
-  if (/(מחר|tomorrow)/.test(lower)) date = todayStr(addDays(new Date(), 1));
-  else if (/(היום|today)/.test(lower)) date = todayStr();
-
-  const person = input.peopleNames.find((n) => text.includes(n)) ?? null;
-
-  const bring: string[] = [];
-  const bringMatch = text.match(/להביא(.+?)(?:\.|$)/);
-  if (bringMatch) {
-    bring.push(...bringMatch[1].split(/,|ו-|ו |and/).map((s) => s.trim()).filter(Boolean));
-  }
-
-  const grocery: string[] = [];
-  if (/(לקנות|סופר|נגמר|out of|buy|grocery)/.test(lower)) {
-    const gm = text.match(/(?:לקנות|נגמר לנו)(.+?)(?:\.|$)/);
-    if (gm) grocery.push(...gm[1].split(/,|ו-|ו /).map((s) => s.trim()).filter(Boolean));
-  }
-
   const timeMatch = text.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
-  const time = timeMatch ? timeMatch[0] : null;
-
-  const type: ExtractType = bring.length ? "bring" : time ? "event" : "task";
   const title =
     text.length > 0
       ? text.replace(/\s+/g, " ").slice(0, 120)
       : input.imageBase64
-      ? "משימה מתמונה (יש לבדוק ידנית)"
+      ? "פריט מתמונה (יש לבדוק ידנית)"
       : "משימה חדשה";
-
-  return {
-    ...EMPTY,
-    person_name: person,
-    type,
+  const item: PlannedItem = {
+    kind: timeMatch ? "event" : "task",
     title,
-    date,
-    time,
-    bring,
-    grocery,
-    confidence: 0.3,
-    used_ai: false,
+    person_name: input.peopleNames.find((n) => text.includes(n)) ?? null,
+    date: /(מחר|tomorrow)/.test(text) ? todayStr(addDays(new Date(), 1)) : null,
+    time: timeMatch ? timeMatch[0] : null,
+    weekday: null,
+    slot: null,
   };
+  return { items: [item], confidence: 0.3, used_ai: false };
 }

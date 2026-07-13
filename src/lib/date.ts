@@ -17,6 +17,13 @@ export function weekdayOf(d: Date = new Date()): number {
   return d.getDay(); // 0 = Sunday
 }
 
+// Next date (>= today) that falls on the given weekday (0=Sun..6=Sat).
+export function nextWeekdayDate(weekday: number, from: Date = new Date()): string {
+  let diff = weekday - from.getDay();
+  if (diff < 0) diff += 7;
+  return todayStr(addDays(from, diff));
+}
+
 export const HEB_WEEKDAYS = [
   "יום ראשון",
   "יום שני",

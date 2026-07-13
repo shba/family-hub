@@ -100,6 +100,9 @@ export default function Dashboard() {
         ))}
       </section>
 
+      <FamilyMenu meals={state.meals} />
+
+
       <section className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
         <WeeklyStrip classes={state.classes} people={state.people} weekday={state.weekday} />
         <GroceryTile
@@ -289,6 +292,39 @@ function PersonCard({
         </div>
       )}
     </Tile>
+  );
+}
+
+function FamilyMenu({ meals }: { meals: Meal[] }) {
+  const family = meals.filter((m) => m.person_id == null);
+  if (family.length === 0) return null;
+  const slots = [
+    ["breakfast", "בוקר"],
+    ["lunch", "צהריים"],
+    ["dinner", "ערב"],
+  ] as const;
+  return (
+    <section className="mt-4">
+      <Tile>
+        <SectionTitle>🍽️ תפריט היום (משפחה)</SectionTitle>
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {slots.map(([slot, label]) => {
+            const items = family.filter((m) => m.slot === slot);
+            if (items.length === 0) return null;
+            return (
+              <div key={slot} className="rounded-lg bg-slate-800/40 p-2">
+                <div className="text-xs font-semibold text-slate-400">{label}</div>
+                <ul className="mt-1 space-y-0.5 text-sm text-slate-100">
+                  {items.map((m) => (
+                    <li key={m.id}>{m.description}</li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      </Tile>
+    </section>
   );
 }
 

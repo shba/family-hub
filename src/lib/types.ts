@@ -14,8 +14,9 @@ export interface Person {
 
 export interface Meal {
   id: number;
-  person_id: number;
-  date: string;
+  person_id: number | null; // null = whole-family menu
+  date: string | null; // a specific date, or null when it's a weekly-recurring menu
+  weekday: number | null; // 0=Sun..6=Sat for a recurring weekly menu
   slot: MealSlot;
   description: string;
   pack: number;
@@ -92,6 +93,7 @@ export interface PlannedItem {
   person_name: string | null;
   date: string | null;
   time: string | null;
+  weekday?: number | null; // 0=Sun..6=Sat, for weekly items (menu/chores by day)
   slot?: MealSlot | null;
   quantity?: string | null;
 }

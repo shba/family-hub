@@ -1,6 +1,6 @@
 import { store, persist, nextId, nowIso } from "./store";
-import { todayStr, weekdayOf, addDays } from "./date";
-import type { Person, Meal, Task, EventItem, DashboardState, TaskType } from "./types";
+import { todayStr, weekdayOf, addDays, nextWeekdayDate } from "./date";
+import type { Person, Meal, Task, EventItem, DashboardState, TaskType, PlannedItem } from "./types";
 
 export function getState(): DashboardState {
   const today = todayStr();
@@ -8,7 +8,9 @@ export function getState(): DashboardState {
 
   const people = [...store.people].sort((a, b) => a.sort - b.sort);
 
-  const meals = store.meals.filter((m) => m.date === today);
+  const meals = store.meals.filter(
+    (m) => m.date === today || (m.weekday != null && m.weekday === weekday)
+  );
 
   const tasks = store.tasks
     .filter((t) => t.date === today && t.status === "confirmed")
@@ -148,23 +150,71 @@ export function addGrocery(name: string, quantity: string | null, source = "manu
 }
 
 export function addMeal(input: {
-  person_id: number;
+  person_id: number | null;
   slot: string;
   description: string;
-  date?: string;
+  date?: string | null;
+  weekday?: number | null;
   pack?: number;
 }): number {
   const id = nextId();
   store.meals.push({
     id,
     person_id: input.person_id,
-    date: input.date ?? todayStr(),
+    date: input.date ?? null,
+    weekday: input.weekday ?? null,
     slot: input.slot as Meal["slot"],
     description: input.description,
     pack: input.pack ?? 0,
   });
   persist();
   return id;
+}
+
+// Central creation used by the inbox commit and the WhatsApp gateway.
+export function createPlannedItem(item: PlannedItem, status: "confirmed" | "pending" = "confirmed"): void {
+  const person = findPersonByName(item.person_name ?? null);
+  const resolveDate = () => {
+    if (item.date) return item.date;
+    if (item.weekday != null) return nextWeekdayDate(item.weekday);
+    return todayStr();
+  };
+  switch (item.kind) {
+    case "event":
+      createEvent({
+        participants: person ? [person.id] : [],
+        title: item.title,
+        date: resolveDate(),
+        time: item.time ?? null,
+        status,
+        source: "inbox",
+      });
+      break;
+    case "task":
+    case "bring":
+      createTask({
+        person_id: person?.id ?? null,
+        title: item.title,
+        type: item.kind,
+        date: resolveDate(),
+        time: item.time ?? null,
+        status,
+        source: "inbox",
+      });
+      break;
+    case "grocery":
+      addGrocery(item.title, item.quantity ?? null, "inbox");
+      break;
+    case "meal":
+      addMeal({
+        person_id: person?.id ?? null,
+        slot: (item.slot as string) ?? "lunch",
+        description: item.title,
+        weekday: item.weekday ?? null,
+        date: item.weekday != null ? null : item.date ?? todayStr(),
+      });
+      break;
+  }
 }
 
 export function createEvent(input: {
