@@ -1,4 +1,5 @@
 import { todayStr, addDays } from "./date";
+import type { EventDraft, PlannedItem, MealSlot } from "./types";
 
 const REQUEST_TIMEOUT_MS = 35000;
 
@@ -23,6 +24,7 @@ export interface Extraction {
   bring: string[];
   grocery: string[];
   meal: { slot: "breakfast" | "lunch" | "dinner"; description: string } | null;
+  events: EventDraft[]; // multiple timed items (e.g. a games/fixture schedule)
   confidence: number;
   used_ai: boolean;
 }
@@ -42,6 +44,7 @@ const EMPTY: Omit<Extraction, "title" | "used_ai"> = {
   bring: [],
   grocery: [],
   meal: null,
+  events: [],
   confidence: 0,
 };
 
@@ -104,7 +107,7 @@ async function extractWithOpenAI(
       { role: "user", content: userContent },
     ],
     temperature: 0.2,
-    max_tokens: 512,
+    max_tokens: 4096,
   };
 
   const res = await postWithTimeout(`${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`, {
@@ -158,7 +161,11 @@ async function extractWithGemini(input: ExtractInput, key: string): Promise<Extr
 
   const body = {
     contents: [{ parts }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0.2,
+      maxOutputTokens: 8192,
+    },
   };
 
   const res = await postWithTimeout(url, {
@@ -198,9 +205,11 @@ function buildPrompt(text: string, names: string[], today: string, hasImage: boo
   "bring": string[],
   "grocery": string[],
   "meal": {"slot":"breakfast"|"lunch"|"dinner","description":string}|null,
+  "events": [{"title": string, "date": string|null, "time": string|null, "person_name": string|null}],
   "confidence": number
 }`,
     'הנחיות: "bring" = פריטים שצריך להביא לבית הספר. "grocery" = פריטים לקנייה בסופר. אם זו בקשה כללית השתמש ב-type="task". שמור על הכיתוב בעברית.',
+    'אם מבקשים להוסיף לוח זמנים / רשימת אירועים או משחקים (למשל "כל משחקי המונדיאל"), החזר כל אירוע בנפרד בתוך "events" עם תאריך (YYYY-MM-DD) ושעה. במקרה כזה אפשר להשאיר את "type"="event" ואת שאר השדות ריקים. החזר עד 60 אירועים לכל היותר.',
     text ? `ההודעה: """${text}"""` : "אין טקסט - נתח מהתמונה.",
   ]
     .filter(Boolean)
@@ -217,9 +226,66 @@ function normalize(p: Partial<Extraction>, usedAi: boolean): Extraction {
     bring: Array.isArray(p.bring) ? p.bring.map(String) : [],
     grocery: Array.isArray(p.grocery) ? p.grocery.map(String) : [],
     meal: p.meal && p.meal.slot ? { slot: p.meal.slot, description: String(p.meal.description ?? "") } : null,
+    events: Array.isArray(p.events)
+      ? p.events
+          .filter((e) => e && (e.title || e.date || e.time))
+          .slice(0, 60)
+          .map((e) => ({
+            title: String(e.title ?? "").slice(0, 200) || "אירוע",
+            date: e.date ?? null,
+            time: e.time ?? null,
+            person_name: e.person_name ?? null,
+          }))
+      : [],
     confidence: typeof p.confidence === "number" ? p.confidence : usedAi ? 0.7 : 0.3,
     used_ai: usedAi,
   };
+}
+
+// Flattens an extraction into the concrete actions to preview/create.
+export function toPlannedItems(ex: Extraction): PlannedItem[] {
+  const items: PlannedItem[] = [];
+
+  for (const e of ex.events) {
+    items.push({
+      kind: "event",
+      title: e.title,
+      person_name: e.person_name,
+      date: e.date,
+      time: e.time,
+    });
+  }
+
+  // Only treat the single main item as its own action when there isn't a
+  // dedicated events[] list (otherwise it's just a wrapper for the list).
+  if (ex.events.length === 0 && ex.title) {
+    items.push({
+      kind: ex.type === "event" ? "event" : ex.type === "bring" ? "bring" : "task",
+      title: ex.title,
+      person_name: ex.person_name,
+      date: ex.date,
+      time: ex.time,
+    });
+  }
+
+  for (const b of ex.bring) {
+    items.push({ kind: "bring", title: b, person_name: ex.person_name, date: ex.date, time: null });
+  }
+  for (const g of ex.grocery) {
+    items.push({ kind: "grocery", title: g, person_name: null, date: null, time: null });
+  }
+  if (ex.meal) {
+    items.push({
+      kind: "meal",
+      title: ex.meal.description,
+      person_name: ex.person_name,
+      date: ex.date,
+      time: null,
+      slot: ex.meal.slot as MealSlot,
+    });
+  }
+
+  return items;
 }
 
 // Very small offline parser so the demo works with no API key.

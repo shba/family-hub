@@ -1,6 +1,6 @@
 import { store, persist, nextId, nowIso } from "./store";
-import { todayStr, weekdayOf } from "./date";
-import type { Person, Meal, Task, DashboardState, TaskType } from "./types";
+import { todayStr, weekdayOf, addDays } from "./date";
+import type { Person, Meal, Task, EventItem, DashboardState, TaskType } from "./types";
 
 export function getState(): DashboardState {
   const today = todayStr();
@@ -223,4 +223,27 @@ export function findPersonByName(name: string | null): Person | null {
 
 export function listPeople(): Person[] {
   return [...store.people].sort((a, b) => a.sort - b.sort);
+}
+
+export interface UpcomingResult {
+  start: string;
+  end: string;
+  people: Person[];
+  events: EventItem[];
+  tasks: Task[];
+}
+
+export function getUpcoming(days = 30): UpcomingResult {
+  const start = todayStr();
+  const end = todayStr(addDays(new Date(), days));
+
+  const events = store.events
+    .filter((e) => e.status !== "pending" && e.date >= start && e.date <= end)
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? ""));
+
+  const tasks = store.tasks
+    .filter((t) => t.status === "confirmed" && t.date >= start && t.date <= end)
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? ""));
+
+  return { start, end, people: listPeople(), events, tasks };
 }

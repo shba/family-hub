@@ -174,6 +174,12 @@ function TopBar({ state, now }: { state: DashboardState; now: Date }) {
         >
           ➕ הוסף משימה / תמונה
         </Link>
+        <Link
+          href="/schedule"
+          className="shrink-0 rounded-xl bg-slate-700 px-5 py-3 text-center font-medium hover:bg-slate-600"
+        >
+          🗓️ לוח עתידי
+        </Link>
       </div>
     </Tile>
   );

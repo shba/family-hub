@@ -70,6 +70,25 @@ export interface EventItem {
   source?: string;
 }
 
+export interface EventDraft {
+  title: string;
+  date: string | null;
+  time: string | null;
+  person_name: string | null;
+}
+
+// A concrete action the extractor proposes; shown in the inbox preview and
+// then sent to /api/commit to be created.
+export interface PlannedItem {
+  kind: "event" | "task" | "bring" | "grocery" | "meal";
+  title: string;
+  person_name: string | null;
+  date: string | null;
+  time: string | null;
+  slot?: MealSlot | null;
+  quantity?: string | null;
+}
+
 export interface DashboardState {
   today: string;
   weekday: number;
