@@ -9,6 +9,12 @@ export const config = {
 };
 
 export function middleware(req: NextRequest) {
+  // Calendar (ICS) feed is fetched by Google with no auth header; it guards
+  // itself with a token query param, so bypass Basic Auth here.
+  if (req.nextUrl.pathname.startsWith("/api/calendar")) {
+    return NextResponse.next();
+  }
+
   const token = process.env.API_TOKEN;
   if (token && req.nextUrl.pathname.startsWith("/api/extract")) {
     if (req.headers.get("x-api-token") === token) {

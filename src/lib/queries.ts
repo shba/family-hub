@@ -288,6 +288,12 @@ export function listPeople(): Person[] {
   return [...store.people].sort((a, b) => a.sort - b.sort);
 }
 
+export function getCalendarItems(): { events: EventItem[]; tasks: Task[]; people: Person[] } {
+  const events = store.events.filter((e) => e.status !== "pending");
+  const tasks = store.tasks.filter((t) => t.status === "confirmed");
+  return { events, tasks, people: listPeople() };
+}
+
 export interface UpcomingResult {
   start: string;
   end: string;

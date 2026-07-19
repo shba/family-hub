@@ -100,6 +100,8 @@ export default function Dashboard() {
         ))}
       </section>
 
+      <GeneralTasks tasks={state.tasks} onToggle={toggleTask} />
+
       <FamilyMenu meals={state.meals} />
 
 
@@ -292,6 +294,29 @@ function PersonCard({
         </div>
       )}
     </Tile>
+  );
+}
+
+function GeneralTasks({
+  tasks,
+  onToggle,
+}: {
+  tasks: Task[];
+  onToggle: (id: number) => void;
+}) {
+  const general = tasks.filter((t) => t.person_id == null);
+  if (general.length === 0) return null;
+  return (
+    <section className="mt-4">
+      <Tile>
+        <SectionTitle>✔️ מטלות משפחתיות (כולם)</SectionTitle>
+        <ul className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
+          {general.map((t) => (
+            <TaskRow key={t.id} task={t} onToggle={onToggle} />
+          ))}
+        </ul>
+      </Tile>
+    </section>
   );
 }
 

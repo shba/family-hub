@@ -77,7 +77,7 @@ export default function SchedulePage() {
           });
           const tasks =
             section.personId === null
-              ? []
+              ? data.tasks.filter((t) => t.person_id == null)
               : data.tasks.filter((t) => t.person_id === section.personId);
 
           if (events.length === 0 && tasks.length === 0) return null;
