@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import type { PlannedItem } from "@/lib/types";
 
@@ -30,6 +30,54 @@ export default function InboxPage() {
   const [usedAi, setUsedAi] = useState(false);
   const [committed, setCommitted] = useState<Record<string, number> | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Manual add
+  const [showManual, setShowManual] = useState(false);
+  const [mKind, setMKind] = useState<PlannedItem["kind"]>("task");
+  const [mTitle, setMTitle] = useState("");
+  const [mPerson, setMPerson] = useState("");
+  const [mDate, setMDate] = useState("");
+  const [mTime, setMTime] = useState("");
+  const [mSlot, setMSlot] = useState("lunch");
+
+  useEffect(() => {
+    fetch("/api/people")
+      .then((r) => r.json())
+      .then((d) => setPeople(d.people || []))
+      .catch(() => {});
+  }, []);
+
+  const addManual = async () => {
+    if (!mTitle.trim()) return;
+    setLoading(true);
+    setError(null);
+    setCommitted(null);
+    const item: PlannedItem = {
+      kind: mKind,
+      title: mTitle.trim(),
+      person_name: mPerson || null,
+      date: mDate || null,
+      time: mKind === "meal" ? null : mTime || null,
+      slot: mKind === "meal" ? (mSlot as PlannedItem["slot"]) : null,
+    };
+    try {
+      const res = await fetch("/api/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: [item] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה");
+      setCommitted(data.counts || {});
+      setMTitle("");
+      setMTime("");
+      setShowManual(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "שגיאה");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const onFile = (file: File | undefined) => {
     if (!file) return;
@@ -114,6 +162,113 @@ export default function InboxPage() {
         כתוב בקשה חופשית (או העלה תמונה). המערכת תנתח ותציג בדיוק מה עומד להתווסף - ורק אחרי
         שתאשר, זה יתווסף ללוח.
       </p>
+
+      <div className="mt-4">
+        <button
+          onClick={() => setShowManual((v) => !v)}
+          className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500"
+        >
+          ➕ הוספה ידנית (ללא בינה מלאכותית)
+        </button>
+      </div>
+
+      {showManual && (
+        <div className="mt-3 grid grid-cols-1 gap-3 rounded-2xl border border-emerald-500/30 bg-slate-900/50 p-4 sm:grid-cols-2">
+          <div>
+            <label className="text-xs text-slate-400">סוג</label>
+            <select
+              value={mKind}
+              onChange={(e) => setMKind(e.target.value as PlannedItem["kind"])}
+              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+            >
+              <option value="task">✔️ משימה</option>
+              <option value="event">🗓️ אירוע</option>
+              <option value="bring">🎒 להביא</option>
+              <option value="grocery">🛒 קניות</option>
+              <option value="meal">🍽️ ארוחה</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-slate-400">כותרת</label>
+            <input
+              value={mTitle}
+              onChange={(e) => setMTitle(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addManual()}
+              placeholder="למשל: חוג שחייה"
+              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+            />
+          </div>
+          {mKind !== "grocery" && (
+            <div>
+              <label className="text-xs text-slate-400">מי</label>
+              <select
+                value={mPerson}
+                onChange={(e) => setMPerson(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+              >
+                <option value="">— כולם / משפחה —</option>
+                {people.map((p) => (
+                  <option key={p.id} value={p.name}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {mKind !== "grocery" && (
+            <div>
+              <label className="text-xs text-slate-400">תאריך (ברירת מחדל: היום)</label>
+              <input
+                type="date"
+                value={mDate}
+                onChange={(e) => setMDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+              />
+            </div>
+          )}
+          {mKind === "meal" ? (
+            <div>
+              <label className="text-xs text-slate-400">ארוחה</label>
+              <select
+                value={mSlot}
+                onChange={(e) => setMSlot(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+              >
+                <option value="breakfast">בוקר</option>
+                <option value="lunch">צהריים</option>
+                <option value="dinner">ערב</option>
+              </select>
+            </div>
+          ) : (
+            mKind !== "grocery" && (
+              <div>
+                <label className="text-xs text-slate-400">שעה (לא חובה)</label>
+                <input
+                  type="time"
+                  value={mTime}
+                  onChange={(e) => setMTime(e.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+                />
+              </div>
+            )
+          )}
+          <div className="flex gap-2 sm:col-span-2">
+            <button
+              onClick={addManual}
+              disabled={loading || !mTitle.trim()}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {loading ? "מוסיף..." : "הוסף"}
+            </button>
+            <button
+              onClick={() => setShowManual(false)}
+              className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-600"
+            >
+              ביטול
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="mt-5 space-y-4 rounded-2xl border border-slate-700/60 bg-slate-900/50 p-4">
         <textarea

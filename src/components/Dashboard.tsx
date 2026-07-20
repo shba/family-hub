@@ -13,9 +13,8 @@ import type {
   EventItem,
 } from "@/lib/types";
 import { eventParticipants } from "@/lib/types";
-import type { PlannedItem } from "@/lib/types";
 import { colorOf } from "@/lib/colors";
-import { HEB_WEEKDAYS_SHORT, HEB_WEEKDAYS, HEB_MONTHS, todayStr } from "@/lib/date";
+import { HEB_WEEKDAYS_SHORT, HEB_WEEKDAYS, HEB_MONTHS } from "@/lib/date";
 
 const SLOT_LABEL: Record<string, string> = {
   breakfast: "בוקר",
@@ -35,7 +34,6 @@ export default function Dashboard() {
   const [state, setState] = useState<DashboardState | null>(null);
   const [gcal, setGcal] = useState<GEventLite[]>([]);
   const [now, setNow] = useState(new Date());
-  const [showAdd, setShowAdd] = useState(false);
 
   const load = useCallback(async () => {
     const data = (await api("/api/state")) as DashboardState;
@@ -99,27 +97,7 @@ export default function Dashboard() {
     <main className="mx-auto max-w-[1600px] p-4 lg:p-6">
       <TopBar state={state} now={now} />
 
-      <div className="mt-3 flex justify-end">
-        <button
-          onClick={() => setShowAdd(true)}
-          className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500"
-        >
-          ➕ הוספה ידנית
-        </button>
-      </div>
-
-      {showAdd && (
-        <QuickAdd
-          people={state.people}
-          onClose={() => setShowAdd(false)}
-          onAdded={() => {
-            setShowAdd(false);
-            load();
-          }}
-        />
-      )}
-
-      <section className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+      <section className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
         {state.people.map((p) => (
           <PersonCard key={p.id} person={p} state={state} onToggle={toggleTask} />
         ))}
@@ -329,146 +307,6 @@ interface GEventLite {
   date: string;
   time: string | null;
   end: string | null;
-}
-
-function QuickAdd({
-  people,
-  onClose,
-  onAdded,
-}: {
-  people: Person[];
-  onClose: () => void;
-  onAdded: () => void;
-}) {
-  const [kind, setKind] = useState<PlannedItem["kind"]>("task");
-  const [title, setTitle] = useState("");
-  const [personName, setPersonName] = useState("");
-  const [date, setDate] = useState(todayStr());
-  const [time, setTime] = useState("");
-  const [slot, setSlot] = useState("lunch");
-  const [saving, setSaving] = useState(false);
-
-  const submit = async () => {
-    if (!title.trim()) return;
-    setSaving(true);
-    const item: PlannedItem = {
-      kind,
-      title: title.trim(),
-      person_name: personName || null,
-      date: date || null,
-      time: kind === "meal" ? null : time || null,
-      slot: kind === "meal" ? (slot as PlannedItem["slot"]) : null,
-    };
-    try {
-      await fetch("/api/commit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: [item] }),
-      });
-      onAdded();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const field = "w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500";
-
-  return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-bold">הוספה ידנית</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-200">
-            ✕
-          </button>
-        </div>
-
-        <div className="mt-3 space-y-3">
-          <div>
-            <label className="text-xs text-slate-400">סוג</label>
-            <select value={kind} onChange={(e) => setKind(e.target.value as PlannedItem["kind"])} className={field}>
-              <option value="task">✔️ משימה</option>
-              <option value="event">🗓️ אירוע</option>
-              <option value="bring">🎒 להביא</option>
-              <option value="grocery">🛒 קניות</option>
-              <option value="meal">🍽️ ארוחה</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="text-xs text-slate-400">כותרת</label>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-              placeholder="למשל: חוג שחייה"
-              className={field}
-              autoFocus
-            />
-          </div>
-
-          {kind !== "grocery" && (
-            <div>
-              <label className="text-xs text-slate-400">מי</label>
-              <select value={personName} onChange={(e) => setPersonName(e.target.value)} className={field}>
-                <option value="">— כולם / משפחה —</option>
-                {people.map((p) => (
-                  <option key={p.id} value={p.name}>
-                    {p.emoji} {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            {kind !== "grocery" && (
-              <div className="flex-1">
-                <label className="text-xs text-slate-400">תאריך</label>
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={field} />
-              </div>
-            )}
-            {kind === "meal" ? (
-              <div className="flex-1">
-                <label className="text-xs text-slate-400">ארוחה</label>
-                <select value={slot} onChange={(e) => setSlot(e.target.value)} className={field}>
-                  <option value="breakfast">בוקר</option>
-                  <option value="lunch">צהריים</option>
-                  <option value="dinner">ערב</option>
-                </select>
-              </div>
-            ) : (
-              kind !== "grocery" && (
-                <div className="flex-1">
-                  <label className="text-xs text-slate-400">שעה (לא חובה)</label>
-                  <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={field} />
-                </div>
-              )
-            )}
-          </div>
-        </div>
-
-        <div className="mt-4 flex gap-2">
-          <button
-            onClick={submit}
-            disabled={saving || !title.trim()}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
-          >
-            {saving ? "מוסיף..." : "הוסף"}
-          </button>
-          <button onClick={onClose} className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-600">
-            ביטול
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function GoogleToday({ events, today }: { events: GEventLite[]; today: string }) {
