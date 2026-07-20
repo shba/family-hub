@@ -32,5 +32,9 @@ export async function POST(req: NextRequest) {
   const ex = await extract({ text, imageBase64, mime, peopleNames: people.map((p) => p.name) });
   const items = toPlannedItems(ex);
 
-  return NextResponse.json({ items, used_ai: ex.used_ai });
+  return NextResponse.json({
+    items,
+    used_ai: ex.used_ai,
+    people: people.map((p) => ({ id: p.id, name: p.name })),
+  });
 }

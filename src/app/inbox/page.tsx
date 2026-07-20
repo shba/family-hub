@@ -19,8 +19,6 @@ const KIND_LABEL: Record<PlannedItem["kind"], string> = {
   meal: "🍽️ ארוחה",
 };
 
-const SLOT_LABEL: Record<string, string> = { breakfast: "בוקר", lunch: "צהריים", dinner: "ערב" };
-const WD_SHORT = ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"];
 
 export default function InboxPage() {
   const [text, setText] = useState("");
@@ -28,6 +26,7 @@ export default function InboxPage() {
   const [imageName, setImageName] = useState("");
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<PlannedItem[] | null>(null);
+  const [people, setPeople] = useState<{ id: number; name: string }[]>([]);
   const [usedAi, setUsedAi] = useState(false);
   const [committed, setCommitted] = useState<Record<string, number> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +59,7 @@ export default function InboxPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "שגיאה");
       setItems(data.items || []);
+      setPeople(data.people || []);
       setUsedAi(!!data.used_ai);
     } catch (e) {
       setError(e instanceof Error ? e.message : "שגיאה לא ידועה");
@@ -95,6 +95,11 @@ export default function InboxPage() {
   const removeItem = (idx: number) => {
     if (!items) return;
     setItems(items.filter((_, i) => i !== idx));
+  };
+
+  const updateItem = (idx: number, patch: Partial<PlannedItem>) => {
+    if (!items) return;
+    setItems(items.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
   };
 
   return (
@@ -177,39 +182,101 @@ export default function InboxPage() {
           {items.length === 0 ? (
             <p className="mt-3 text-sm text-slate-400">לא זוהו פריטים. נסה לנסח מחדש.</p>
           ) : (
-            <ul className="mt-3 max-h-[420px] space-y-1 overflow-y-auto">
+            <>
+            <p className="mt-2 text-xs text-slate-500">
+              אפשר לתקן כל פריט (סוג, מי, כותרת, תאריך/שעה) או להסיר אותו לפני האישור.
+            </p>
+            <ul className="mt-2 max-h-[520px] space-y-2 overflow-y-auto">
               {items.map((it, idx) => (
-                <li
-                  key={idx}
-                  className="flex items-center gap-2 rounded-lg bg-slate-800/50 px-3 py-2 text-sm"
-                >
-                  <span className="shrink-0">{KIND_LABEL[it.kind]}</span>
-                  <span className="flex-1">
-                    {it.title}
-                    {it.person_name && <span className="mr-1 text-slate-400">· {it.person_name}</span>}
-                    {it.kind === "meal" && it.slot && (
-                      <span className="mr-1 text-slate-400">· {SLOT_LABEL[it.slot] ?? it.slot}</span>
+                <li key={idx} className="rounded-lg bg-slate-800/50 p-2">
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <select
+                      value={it.kind}
+                      onChange={(e) =>
+                        updateItem(idx, { kind: e.target.value as PlannedItem["kind"] })
+                      }
+                      className="rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs"
+                    >
+                      <option value="task">✔️ משימה</option>
+                      <option value="event">🗓️ אירוע</option>
+                      <option value="bring">🎒 להביא</option>
+                      <option value="grocery">🛒 קניות</option>
+                      <option value="meal">🍽️ ארוחה</option>
+                    </select>
+                    <input
+                      value={it.title}
+                      onChange={(e) => updateItem(idx, { title: e.target.value })}
+                      className="min-w-[150px] flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1"
+                    />
+                    <button
+                      onClick={() => removeItem(idx)}
+                      className="text-slate-500 hover:text-rose-400"
+                      aria-label="הסר"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                    <label className="flex items-center gap-1">
+                      <span className="text-slate-500">מי:</span>
+                      <select
+                        value={it.person_name ?? ""}
+                        onChange={(e) => updateItem(idx, { person_name: e.target.value || null })}
+                        className="rounded border border-slate-700 bg-slate-800 px-1.5 py-1"
+                      >
+                        <option value="">— כולם —</option>
+                        {people.map((p) => (
+                          <option key={p.id} value={p.name}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {it.kind === "meal" ? (
+                      <label className="flex items-center gap-1">
+                        <span className="text-slate-500">ארוחה:</span>
+                        <select
+                          value={it.slot ?? "lunch"}
+                          onChange={(e) =>
+                            updateItem(idx, { slot: e.target.value as PlannedItem["slot"] })
+                          }
+                          className="rounded border border-slate-700 bg-slate-800 px-1.5 py-1"
+                        >
+                          <option value="breakfast">בוקר</option>
+                          <option value="lunch">צהריים</option>
+                          <option value="dinner">ערב</option>
+                        </select>
+                      </label>
+                    ) : (
+                      <label className="flex items-center gap-1">
+                        <span className="text-slate-500">שעה:</span>
+                        <input
+                          type="time"
+                          value={it.time ?? ""}
+                          onChange={(e) => updateItem(idx, { time: e.target.value || null })}
+                          className="rounded border border-slate-700 bg-slate-800 px-1.5 py-1"
+                        />
+                      </label>
                     )}
-                    {it.weekday != null && (
-                      <span className="mr-1 text-slate-400">· יום {WD_SHORT[it.weekday]}</span>
-                    )}
-                    {(it.date || it.time) && it.weekday == null && (
-                      <span className="mr-1 text-slate-400 tabular-nums">
-                        · {it.date ?? "היום"}
-                        {it.time ? ` ${it.time}` : ""}
-                      </span>
-                    )}
-                  </span>
-                  <button
-                    onClick={() => removeItem(idx)}
-                    className="text-slate-500 hover:text-rose-400"
-                    aria-label="הסר"
-                  >
-                    ✕
-                  </button>
+                    <label className="flex items-center gap-1">
+                      <span className="text-slate-500">תאריך:</span>
+                      <input
+                        type="date"
+                        value={it.date ?? ""}
+                        onChange={(e) =>
+                          updateItem(idx, {
+                            date: e.target.value || null,
+                            weekday: e.target.value ? null : it.weekday,
+                          })
+                        }
+                        className="rounded border border-slate-700 bg-slate-800 px-1.5 py-1"
+                      />
+                    </label>
+                  </div>
                 </li>
               ))}
             </ul>
+            </>
           )}
 
           {items.length > 0 && (
