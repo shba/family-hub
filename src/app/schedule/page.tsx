@@ -19,12 +19,22 @@ function hebDate(iso: string): string {
   return `${HEB_WEEKDAYS[d.getDay()]}, ${d.getDate()} ב${HEB_MONTHS[d.getMonth()]}`;
 }
 
+interface GEventLite {
+  title: string;
+  date: string;
+  time: string | null;
+  end: string | null;
+}
+
 export default function SchedulePage() {
   const [data, setData] = useState<Upcoming | null>(null);
+  const [gcal, setGcal] = useState<GEventLite[]>([]);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/upcoming?days=365");
     setData(await res.json());
+    const g = await fetch("/api/gcal?days=365").then((r) => r.json());
+    setGcal(Array.isArray(g.events) ? g.events : []);
   }, []);
 
   useEffect(() => {
@@ -168,7 +178,42 @@ export default function SchedulePage() {
           );
         })}
 
-        {data.events.length === 0 && data.tasks.length === 0 && (
+        {gcal.length > 0 &&
+          (() => {
+            const byDate = new Map<string, GEventLite[]>();
+            for (const e of gcal) {
+              if (!byDate.has(e.date)) byDate.set(e.date, []);
+              byDate.get(e.date)!.push(e);
+            }
+            const dates = [...byDate.keys()].sort();
+            return (
+              <section className="rounded-2xl border border-slate-700/60 bg-slate-900/50 p-4">
+                <h2 className="mb-3 text-lg font-bold">📅 גוגל קלנדר</h2>
+                <div className="space-y-3">
+                  {dates.map((date) => (
+                    <div key={date}>
+                      <div className="mb-1 text-sm font-semibold text-sky-200">{hebDate(date)}</div>
+                      <ul className="space-y-1">
+                        {byDate
+                          .get(date)!
+                          .sort((a, b) => (a.time ?? "").localeCompare(b.time ?? ""))
+                          .map((e, i) => (
+                            <li key={i} className="flex items-baseline gap-2 text-sm">
+                              <span className="w-16 shrink-0 tabular-nums text-slate-400">
+                                {e.time ?? "כל היום"}
+                              </span>
+                              <span className="text-slate-100">{e.title}</span>
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            );
+          })()}
+
+        {data.events.length === 0 && data.tasks.length === 0 && gcal.length === 0 && (
           <div className="rounded-2xl border border-slate-700/60 bg-slate-900/50 p-6 text-center text-slate-400">
             אין אירועים עתידיים. הוסף דרך ➕ הוספת משימות.
           </div>

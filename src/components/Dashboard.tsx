@@ -32,11 +32,14 @@ async function api(path: string, options?: RequestInit) {
 
 export default function Dashboard() {
   const [state, setState] = useState<DashboardState | null>(null);
+  const [gcal, setGcal] = useState<GEventLite[]>([]);
   const [now, setNow] = useState(new Date());
 
   const load = useCallback(async () => {
     const data = (await api("/api/state")) as DashboardState;
     setState(data);
+    const g = await api("/api/gcal?days=1");
+    setGcal(Array.isArray(g.events) ? g.events : []);
   }, []);
 
   useEffect(() => {
@@ -99,6 +102,8 @@ export default function Dashboard() {
           <PersonCard key={p.id} person={p} state={state} onToggle={toggleTask} />
         ))}
       </section>
+
+      <GoogleToday events={gcal} today={state.today} />
 
       <GeneralTasks tasks={state.tasks} onToggle={toggleTask} />
 
@@ -294,6 +299,33 @@ function PersonCard({
         </div>
       )}
     </Tile>
+  );
+}
+
+interface GEventLite {
+  title: string;
+  date: string;
+  time: string | null;
+  end: string | null;
+}
+
+function GoogleToday({ events, today }: { events: GEventLite[]; today: string }) {
+  const list = events.filter((e) => e.date === today);
+  if (list.length === 0) return null;
+  return (
+    <section className="mt-4">
+      <Tile>
+        <SectionTitle>📅 היומן שלי (גוגל)</SectionTitle>
+        <ul className="mt-2 space-y-1">
+          {list.map((e, i) => (
+            <li key={i} className="flex items-baseline gap-2 text-sm">
+              <span className="w-16 shrink-0 tabular-nums text-slate-400">{e.time ?? "כל היום"}</span>
+              <span className="text-slate-100">{e.title}</span>
+            </li>
+          ))}
+        </ul>
+      </Tile>
+    </section>
   );
 }
 
