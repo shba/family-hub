@@ -1,0 +1,6 @@
+* text=auto
+
+# These are executed on Linux (Jetson / containers) - CRLF breaks the shebang.
+*.sh text eol=lf
+*.service text eol=lf
+Dockerfile text eol=lf

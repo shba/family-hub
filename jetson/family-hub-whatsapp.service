@@ -1,0 +1,20 @@
+[Unit]
+Description=Family Hub WhatsApp gateway (Baileys)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=/opt/family-hub/whatsapp
+EnvironmentFile=/etc/family-hub/whatsapp.env
+ExecStart=/usr/bin/node gateway.mjs
+Restart=always
+RestartSec=10
+# /var/lib/family-hub holds the WhatsApp login state so it survives restarts.
+StateDirectory=family-hub
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
