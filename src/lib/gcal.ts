@@ -55,14 +55,14 @@ export async function fetchGoogleEvents(days = 90): Promise<GEvent[]> {
       const ev = (data as any)[key];
       if (!ev || ev.type !== "VEVENT" || !ev.start) continue;
 
-      const allDay = ev.datetype === "date";
-      const durationMs =
-        ev.end && ev.start ? new Date(ev.end).getTime() - new Date(ev.start).getTime() : 0;
-
-      const pushInstance = (start: Date) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pushInstance = (start: Date, src: any = ev) => {
+        const allDay = src.datetype === "date";
+        const durationMs =
+          src.end && src.start ? new Date(src.end).getTime() - new Date(src.start).getTime() : 0;
         const end = durationMs ? new Date(start.getTime() + durationMs) : null;
         events.push({
-          title: String(ev.summary ?? "(ללא כותרת)"),
+          title: String(src.summary ?? ev.summary ?? "(ללא כותרת)"),
           date: fmtDate(start),
           time: allDay ? null : fmtTime(start),
           end: allDay || !end ? null : fmtTime(end),
@@ -71,7 +71,15 @@ export async function fetchGoogleEvents(days = 90): Promise<GEvent[]> {
 
       if (ev.rrule) {
         const dates: Date[] = ev.rrule.between(horizonStart, horizonEnd, true);
-        for (const d of dates) pushInstance(new Date(d));
+        for (const d of dates) {
+          // node-ical keys deleted (EXDATE) and edited occurrences of a series
+          // by the occurrence's UTC date.
+          const occKey = d.toISOString().slice(0, 10);
+          if (ev.exdate?.[occKey]) continue; // this occurrence was cancelled
+          const override = ev.recurrences?.[occKey];
+          if (override?.start) pushInstance(new Date(override.start), override);
+          else pushInstance(new Date(d));
+        }
       } else {
         pushInstance(new Date(ev.start));
       }
