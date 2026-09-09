@@ -24,6 +24,7 @@ interface GEventLite {
   date: string;
   time: string | null;
   end: string | null;
+  calendar?: string;
 }
 
 export default function SchedulePage() {
@@ -186,6 +187,8 @@ export default function SchedulePage() {
               byDate.get(e.date)!.push(e);
             }
             const dates = [...byDate.keys()].sort();
+            // Only worth naming the source when more than one calendar is in play.
+            const multi = new Set(gcal.map((e) => e.calendar)).size > 1;
             return (
               <section className="rounded-2xl border border-slate-700/60 bg-slate-900/50 p-4">
                 <h2 className="mb-3 text-lg font-bold">📅 גוגל קלנדר</h2>
@@ -203,6 +206,11 @@ export default function SchedulePage() {
                                 {e.time ?? "כל היום"}
                               </span>
                               <span className="text-slate-100">{e.title}</span>
+                              {multi && e.calendar && (
+                                <span className="rounded-full bg-slate-700/60 px-2 py-0.5 text-[11px] text-slate-300">
+                                  {e.calendar}
+                                </span>
+                              )}
                             </li>
                           ))}
                       </ul>

@@ -307,11 +307,22 @@ interface GEventLite {
   date: string;
   time: string | null;
   end: string | null;
+  calendar?: string;
+}
+
+// Only worth naming the source when more than one calendar is in play.
+function CalendarChip({ name }: { name: string }) {
+  return (
+    <span className="rounded-full bg-slate-700/60 px-2 py-0.5 text-[11px] text-slate-300">
+      {name}
+    </span>
+  );
 }
 
 function GoogleToday({ events, today }: { events: GEventLite[]; today: string }) {
   const list = events.filter((e) => e.date === today);
   if (list.length === 0) return null;
+  const multi = new Set(list.map((e) => e.calendar)).size > 1;
   return (
     <section className="mt-4">
       <Tile>
@@ -321,6 +332,7 @@ function GoogleToday({ events, today }: { events: GEventLite[]; today: string })
             <li key={i} className="flex items-baseline gap-2 text-sm">
               <span className="w-16 shrink-0 tabular-nums text-slate-400">{e.time ?? "כל היום"}</span>
               <span className="text-slate-100">{e.title}</span>
+              {multi && e.calendar && <CalendarChip name={e.calendar} />}
             </li>
           ))}
         </ul>
