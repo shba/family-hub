@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Produces a self-contained server build (.next/standalone) for Docker/Railway.
+  // Produces a self-contained server build (.next/standalone) for Docker.
   output: "standalone",
   // Allow the Next dev server to accept cross-origin dev requests from LAN
   // devices and from a Cloudflare quick tunnel (used for sharing the POC).

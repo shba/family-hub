@@ -1,8 +1,11 @@
-# Runs the whole POC (dashboard + WhatsApp gateway) with persistent volumes.
-# Useful for a full local test or a single VPS. Values come from a .env file.
+# The full stack (dashboard + WhatsApp gateway), self-hosted on the Jetson.
+# Values come from a .env file next to this one - see .env.example.
 #
-#   docker compose up --build -d
-#   docker compose logs -f whatsapp   # scan the QR code here
+#   docker compose up -d --build
+#   docker compose logs -f whatsapp   # link WhatsApp here, or via :8080
+#
+# Data lives in bind mounts under DATA_ROOT (put it on the NVMe, not the SD
+# card) so backing the family up is a plain directory copy.
 services:
   web:
     build: .
@@ -10,28 +13,39 @@ services:
       - "3000:3000"
     environment:
       - DATA_DIR=/data
+      # Leave APP_USERNAME/APP_PASSWORD empty for a LAN-only install; set them
+      # if you expose the dashboard through a tunnel.
       - APP_USERNAME=${APP_USERNAME:-}
       - APP_PASSWORD=${APP_PASSWORD:-}
       - API_TOKEN=${API_TOKEN:-}
+      - CALENDAR_TOKEN=${CALENDAR_TOKEN:-}
+      - GOOGLE_ICS_URL=${GOOGLE_ICS_URL:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - GEMINI_MODEL=${GEMINI_MODEL:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
     volumes:
-      - hubdata:/data
+      - ${DATA_ROOT:-./data-root}/hub:/data
+    extra_hosts:
+      # Lets LLM_BASE_URL point at Ollama running on the Jetson itself.
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   whatsapp:
     build: ./whatsapp
+    ports:
+      # QR / pairing page: http://<jetson-ip>:8080
+      - "8080:8080"
     environment:
       - API_URL=http://web:3000/api/extract
       - API_TOKEN=${API_TOKEN:-}
       - AUTH_DIR=/auth
+      - PORT=8080
       - WA_GROUP=${WA_GROUP:-}
+      - WA_NUMBER=${WA_NUMBER:-}
     volumes:
-      - waauth:/auth
+      - ${DATA_ROOT:-./data-root}/wa-auth:/auth
     depends_on:
       - web
     restart: unless-stopped
-
-volumes:
-  hubdata:
-  waauth:

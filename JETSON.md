@@ -1,140 +1,181 @@
-# Jetson Orin Nano Super — bring-up guide
+# Running Family Hub on the Jetson Orin Nano Super
 
-The Jetson unlocks the one thing the cloud could not do: a **residential IP**.
-WhatsApp rejected every Baileys handshake from Railway's datacenter IPs
-(`405 Connection Failure`, then `401` right after pairing). From your home
-network that restriction disappears, so the gateway belongs on the Jetson.
+Everything runs at home: the dashboard, the AI extraction endpoint, and the
+WhatsApp gateway. No cloud host, no monthly bill, and nothing about your family
+leaves the house except the photo/text you send to Gemini for extraction.
 
-Recommended split for now:
+The Jetson also solves the problem that killed the cloud attempt. WhatsApp
+rejected every Baileys handshake from a datacenter IP (`405 Connection
+Failure`, then `401` immediately after pairing). From a residential connection
+that objection disappears.
 
-| Piece                  | Where          | Why                                            |
-| ---------------------- | -------------- | ---------------------------------------------- |
-| WhatsApp gateway       | Jetson         | Residential IP; needs to stay logged in 24/7   |
-| Dashboard + AI extract | Railway        | Already working, reachable from anywhere        |
-| Local LLM (optional)   | Jetson         | Cuts cloud API cost/latency for text extraction |
+Two containers, defined in `docker-compose.yml`:
 
-Once the gateway is proven you can move the dashboard onto the Jetson too
-(step 5) — but do it as a separate change, not at the same time.
+| Container  | Port | What it does                                        |
+| ---------- | ---- | --------------------------------------------------- |
+| `web`      | 3000 | Dashboard, inbox, API, ICS feed                      |
+| `whatsapp` | 8080 | Baileys gateway; port 8080 is just the QR/link page  |
 
 ---
 
-## 1. Verify the board
+## 0. Rescue your Railway data first (if you still can)
+
+The dashboard's state is a single JSON file. If the Railway project still opens
+at all, grab it before you tear the project down:
 
 ```bash
-# Which JetPack / L4T is on there
-cat /etc/nv_tegra_release
-sudo apt-get update && sudo apt-get install -y python3-pip curl rsync
-sudo pip3 install -U jetson-stats   # then log out/in
-jtop                                # GPU, RAM, temps, power mode
+railway link                       # pick the web service
+railway run cat /data/family.json > family.json
 ```
 
-Put it in max power mode and keep it there (it's a always-on appliance):
+Keep that file — step 3 puts it back. If Railway is entirely gone, skip this;
+the app reseeds with your six family members and you'll re-enter the rest.
+
+## 1. Prepare the board
 
 ```bash
-sudo nvpmodel -m 0      # MAXN on Orin Nano Super
+cat /etc/nv_tegra_release              # which JetPack you're on
+sudo apt-get update && sudo apt-get install -y git rsync curl
+sudo nvpmodel -m 0                     # MAXN - it's an appliance, not a laptop
 sudo jetson_clocks
 ```
 
-If you have the NVMe installed, confirm it's mounted and is where the data
-lives — the microSD will wear out under a database:
+Put the data on the NVMe, not the microSD — the SD card will wear out under
+constant writes:
 
 ```bash
-lsblk                   # look for nvme0n1
-df -h /
+lsblk                                  # find nvme0n1
 ```
 
-If root is still on the SD card, that's fine for the gateway (it writes only a
-few KB of auth state). Move to NVMe before running Postgres in step 5.
+Give the Jetson a fixed address, easiest as a DHCP reservation in your router.
+Everything in the house will point at this IP.
 
-Give the Jetson a fixed address so services keep finding it — either a DHCP
-reservation in your router (easiest) or a static IP on the Jetson itself.
-
-## 2. Get the code onto the Jetson
+## 2. Install the stack
 
 ```bash
-sudo apt-get install -y git
-git clone <your-repo-url> ~/family-hub
+git clone https://github.com/shba/family-hub.git ~/family-hub
 cd ~/family-hub
-```
-
-## 3. Install the WhatsApp gateway as a service
-
-```bash
 sudo ./jetson/setup.sh
 ```
 
-The script installs Node 22 if needed, copies the repo to `/opt/family-hub`,
-installs the gateway's dependencies, drops an env template at
-`/etc/family-hub/whatsapp.env`, and registers a systemd unit that restarts on
-failure and on boot.
+The script installs Docker if needed, copies the repo to `/opt/family-hub`,
+creates the data directories, and writes `/opt/family-hub/.env`. It's safe to
+re-run — it keeps your `.env`, your data, and your WhatsApp login. If you'd
+already installed the older standalone gateway service, it retires that unit
+and carries the WhatsApp login over so you don't rescan the QR.
 
-Then fill in the two values that matter:
+To keep data on the NVMe, run it as `sudo DATA_ROOT=/mnt/nvme/family-hub
+./jetson/setup.sh` (using wherever the NVMe is mounted).
 
-```bash
-sudo nano /etc/family-hub/whatsapp.env
-```
-
-- `API_URL` — `https://<your-web-app>.up.railway.app/api/extract`
-- `API_TOKEN` — the same value as `API_TOKEN` on the Railway web service
-
-Start it and watch:
+Now fill in the secrets:
 
 ```bash
-sudo systemctl start family-hub-whatsapp
-journalctl -u family-hub-whatsapp -f
+sudo nano /opt/family-hub/.env
 ```
 
-## 4. Link WhatsApp and verify end to end
+The two that matter: `GEMINI_API_KEY` (photo extraction) and `API_TOKEN` (any
+long random string — how the gateway authenticates to the dashboard). Add
+`GOOGLE_ICS_URL` if you want your personal calendar on the dashboard. Leave
+`APP_USERNAME`/`APP_PASSWORD` empty for a LAN-only install.
 
-Open `http://<jetson-ip>:8080` from any device on your LAN. The page
-self-refreshes every 5 seconds and shows the QR code; scan it from the spare
-number's phone under **WhatsApp → Settings → Linked devices → Link a device**.
+## 3. Restore your data, then start
 
-What you should see this time, and did not on Railway:
-
-- The QR stays stable long enough to scan (no 2-second churn).
-- Status goes to `✅ מחובר לוואטסאפ` and **stays** there.
-- No `405` / `401` in the logs.
-
-If it still churns, wipe the stale login state once and restart:
+If you rescued `family.json`, drop it in before the first start:
 
 ```bash
-sudo rm -rf /var/lib/family-hub/auth
-sudo systemctl restart family-hub-whatsapp
+sudo cp family.json /opt/family-hub-data/hub/family.json
 ```
 
-Then send a real message into the test group, e.g.
-`מאור צריך להביא מחר חולצה לבנה לטקס`, and confirm it lands in the dashboard's
-inbox as a pending item you can review and confirm.
+```bash
+cd /opt/family-hub && sudo docker compose up -d --build
+```
 
-Leave `WA_GROUP` empty until this works; then set it to a substring of the
-group name so the gateway ignores everything else.
+The first build takes a few minutes (it compiles the Next.js app on-device).
+The dashboard is then at `http://<jetson-ip>:3000`, and Docker's restart policy
+brings both containers back after a reboot or a power cut.
 
-## 5. Optional next steps
+## 4. Link WhatsApp
 
-Each of these is independent — do them one at a time.
+Open `http://<jetson-ip>:8080` and scan the QR from the spare number's phone
+(**WhatsApp → Settings → Linked devices → Link a device**). The page refreshes
+itself every 5 seconds.
 
-**Local LLM.** Ollama's installer detects JetPack and uses the GPU:
+What should be different from the cloud attempt: the QR holds still long enough
+to scan, and the status stays connected rather than dropping to `logged-out`.
+
+If it does churn, the usual cause is stale login state:
+
+```bash
+cd /opt/family-hub
+sudo docker compose down
+sudo rm -rf /opt/family-hub-data/wa-auth/*
+sudo docker compose up -d
+```
+
+Then send a real message into the group and confirm it lands in the inbox as a
+pending item. Once that works, set `WA_GROUP` to a substring of the group name
+so the gateway ignores every other chat.
+
+## 5. Reaching it from outside the house
+
+LAN-only is the safe default and needs nothing. When you want the dashboard on
+your phone away from home, **Tailscale** is the least-exposed option — it's a
+private network, not a public URL, so no one can find or brute-force it:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+Install Tailscale on your phone and the dashboard is at
+`http://<jetson-tailscale-name>:3000` from anywhere.
+
+You only need a genuinely public URL for one thing: letting Google Calendar
+subscribe to the hub's ICS feed. That calls for a Cloudflare Tunnel plus real
+credentials — set `APP_USERNAME`, `APP_PASSWORD`, and a long `CALENDAR_TOKEN`
+before exposing anything. Pulling your Google calendar *into* the dashboard
+needs none of this and works fine on the LAN.
+
+## 6. Back it up
+
+Everything lives under one directory, so a backup is a copy:
+
+```bash
+sudo tar czf ~/family-hub-$(date +%F).tar.gz -C /opt/family-hub-data .
+```
+
+Worth a weekly cron job to somewhere off the Jetson.
+
+## 7. Optional: local LLM
+
+Ollama's installer detects JetPack and uses the GPU:
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5:3b-instruct     # comfortable in 8 GB
-ollama serve                        # exposes an OpenAI-compatible /v1 API
+ollama pull qwen2.5:3b-instruct     # comfortable in 8 GB shared memory
 ```
 
-The extractor already speaks OpenAI-compatible, so pointing it at the Jetson is
-just config (`LLM_BASE_URL=http://<jetson-ip>:11434/v1`, `LLM_MODEL=qwen2.5:3b-instruct`,
-`LLM_API_KEY=ollama`). Note the current provider order prefers Gemini and only
-falls back to the OpenAI-compatible endpoint, so a local model won't be used
-until we flip that order — a small code change when you want local-first. Keep
-Gemini for photos regardless; a 3B model won't read a teacher's handwritten
-note.
+Point the stack at it in `/opt/family-hub/.env`:
 
-**Self-host the dashboard.** `docker compose up -d` on the Jetson runs the web
-app; then the WhatsApp gateway can post to `http://127.0.0.1:3000/api/extract`
-and nothing family-related leaves the house. This is also when to migrate the
-JSON store to Postgres on the NVMe.
+```
+LLM_BASE_URL=http://host.docker.internal:11434/v1
+LLM_MODEL=qwen2.5:3b-instruct
+LLM_API_KEY=ollama
+```
 
-**The 27" screen.** Point a browser at the dashboard in kiosk mode and disable
-screen blanking. You don't need the Jetson to drive the panel — any spare
-device on the LAN works, and that keeps the Jetson headless.
+One caveat: the extractor tries Gemini first and only falls back to this
+endpoint, so a local model won't actually be used until we flip that order —
+a small code change when you want it. Keep Gemini for photos regardless; a 3B
+model won't read a teacher's handwritten note.
+
+## Day-to-day
+
+```bash
+cd /opt/family-hub
+sudo docker compose logs -f            # or: logs -f whatsapp
+sudo docker compose restart web
+sudo docker compose ps
+
+# Update after pulling new code:
+cd ~/family-hub && git pull && sudo ./jetson/setup.sh
+```
