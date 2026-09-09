@@ -10,7 +10,9 @@ services:
   web:
     build: .
     ports:
-      - "3000:3000"
+      # Host ports are configurable so the stack can dodge whatever else is
+      # already listening on the box.
+      - "${WEB_PORT:-3000}:3000"
     environment:
       - DATA_DIR=/data
       # Leave APP_USERNAME/APP_PASSWORD empty for a LAN-only install; set them
@@ -36,7 +38,7 @@ services:
     build: ./whatsapp
     ports:
       # QR / pairing page: http://<jetson-ip>:8080
-      - "8080:8080"
+      - "${WA_PORT:-8080}:8080"
     environment:
       - API_URL=http://web:3000/api/extract
       - API_TOKEN=${API_TOKEN:-}
