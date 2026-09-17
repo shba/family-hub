@@ -1,6 +1,15 @@
-import { store, persist, nextId, nowIso } from "./store";
+﻿import { store, persist, nextId, nowIso } from "./store";
 import { todayStr, weekdayOf, addDays, nextWeekdayDate } from "./date";
-import type { Person, Meal, Task, EventItem, DashboardState, TaskType, PlannedItem } from "./types";
+import type {
+  Person,
+  Meal,
+  Task,
+  EventItem,
+  DashboardState,
+  TaskType,
+  PlannedItem,
+  Grocery,
+} from "./types";
 
 export function getState(): DashboardState {
   const today = todayStr();
@@ -149,6 +158,37 @@ export function addGrocery(name: string, quantity: string | null, source = "manu
   return id;
 }
 
+// The chat assistant names things the way people do ("החולצה הלבנה"), so these
+// match loosely: exact, then either string containing the other.
+function looseMatch<T>(items: T[], query: string, textOf: (item: T) => string): T | null {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return null;
+  const text = (item: T) => textOf(item).toLowerCase();
+  return (
+    items.find((i) => text(i) === needle) ??
+    items.find((i) => text(i).includes(needle)) ??
+    items.find((i) => needle.includes(text(i))) ??
+    null
+  );
+}
+
+export function findTaskByTitle(query: string): Task | null {
+  const open = store.tasks.filter((t) => t.status === "confirmed" && !t.done);
+  return looseMatch(open, query, (t) => t.title);
+}
+
+export function setTaskDone(id: number, done: boolean): void {
+  const t = store.tasks.find((x) => x.id === id);
+  if (t) {
+    t.done = done ? 1 : 0;
+    persist();
+  }
+}
+
+export function findGroceryByName(query: string): Grocery | null {
+  return looseMatch(store.grocery, query, (g) => g.name);
+}
+
 export function addMeal(input: {
   person_id: number | null;
   slot: string;
@@ -172,7 +212,11 @@ export function addMeal(input: {
 }
 
 // Central creation used by the inbox commit and the WhatsApp gateway.
-export function createPlannedItem(item: PlannedItem, status: "confirmed" | "pending" = "confirmed"): void {
+export function createPlannedItem(
+  item: PlannedItem,
+  status: "confirmed" | "pending" = "confirmed",
+  source = "inbox"
+): void {
   const person = findPersonByName(item.person_name ?? null);
   const resolveDate = () => {
     if (item.date) return item.date;
@@ -187,7 +231,7 @@ export function createPlannedItem(item: PlannedItem, status: "confirmed" | "pend
         date: resolveDate(),
         time: item.time ?? null,
         status,
-        source: "inbox",
+        source,
       });
       break;
     case "task":
@@ -199,11 +243,11 @@ export function createPlannedItem(item: PlannedItem, status: "confirmed" | "pend
         date: resolveDate(),
         time: item.time ?? null,
         status,
-        source: "inbox",
+        source,
       });
       break;
     case "grocery":
-      addGrocery(item.title, item.quantity ?? null, "inbox");
+      addGrocery(item.title, item.quantity ?? null, source);
       break;
     case "meal":
       addMeal({

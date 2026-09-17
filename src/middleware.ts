@@ -15,8 +15,13 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Endpoints the WhatsApp gateway calls; it authenticates with a shared token
+  // instead of Basic Auth.
   const token = process.env.API_TOKEN;
-  if (token && req.nextUrl.pathname.startsWith("/api/extract")) {
+  const gatewayPath =
+    req.nextUrl.pathname.startsWith("/api/extract") ||
+    req.nextUrl.pathname.startsWith("/api/assistant");
+  if (token && gatewayPath) {
     if (req.headers.get("x-api-token") === token) {
       return NextResponse.next();
     }

@@ -1,8 +1,12 @@
-// Optional read-only WhatsApp gateway for the Family Hub POC.
+// WhatsApp gateway for the Family Hub.
 //
-// It links to a WhatsApp account (use a SPARE number, never your main one),
-// listens to incoming group messages, and forwards text + photos to the
-// family-hub extractor endpoint (/api/extract). It NEVER sends messages.
+// It links to a WhatsApp account (use a SPARE number, never your main one) and
+// does two things:
+//   1. Silently forwards group messages + photos to /api/extract, where they
+//      become pending items awaiting approval on the dashboard.
+//   2. Answers when addressed - any direct message, or a group message opening
+//      with the trigger word - by asking /api/assistant and replying in chat.
+//      The assistant can also update the family's tasks/events/grocery list.
 //
 // Usage:
 //   cd whatsapp
@@ -12,6 +16,8 @@
 // Config via environment variables:
 //   API_URL     default http://localhost:3000/api/extract
 //   WA_GROUP    optional substring; only groups whose name matches are processed
+//   WA_TRIGGER  word that addresses the bot in a group (default "בוט")
+//   WA_ALLOW    optional comma-separated numbers allowed to DM the bot
 //
 // WARNING: This uses an unofficial library and violates WhatsApp's ToS.
 // There is a small risk the number gets banned. Use a throwaway number.
@@ -35,6 +41,17 @@ const API_URL = process.env.API_URL || "http://localhost:3000/api/extract";
 const API_TOKEN = process.env.API_TOKEN || "";
 const AUTH_DIR = process.env.AUTH_DIR || "auth";
 const GROUP_FILTER = (process.env.WA_GROUP || "").trim();
+// Conversational endpoint; defaults to a sibling of the extract URL.
+const ASSISTANT_URL =
+  process.env.ASSISTANT_URL || API_URL.replace(/\/api\/extract\/?$/, "/api/assistant");
+// Word that addresses the bot inside a group. Direct messages never need it.
+// Empty (e.g. an unset compose variable) falls back to the default.
+const TRIGGER = (process.env.WA_TRIGGER || "בוט").trim();
+// Optional allowlist for direct messages (digits, with country code).
+const DM_ALLOW = (process.env.WA_ALLOW || "")
+  .split(",")
+  .map((s) => s.replace(/\D/g, ""))
+  .filter(Boolean);
 // If set (spare number, digits only incl. country code, e.g. 972501234567),
 // the gateway uses pairing-code login instead of a QR - easier from cloud logs.
 const WA_NUMBER = (process.env.WA_NUMBER || "").replace(/\D/g, "");
@@ -113,10 +130,45 @@ async function forward({ text, imageBase64, mime, sender }) {
     const data = await res.json().catch(() => ({}));
     console.log(
       `→ forwarded from "${sender}":`,
-      data?.extraction?.title || data?.error || "ok"
+      data?.error || `${data?.count ?? 0} פריטים ממתינים לאישור`
     );
   } catch (err) {
     console.error("Failed to forward to API:", err.message);
+  }
+}
+
+// In a group the bot stays quiet unless the message opens with the trigger
+// word; a direct message is always meant for it.
+function isAddressed(text) {
+  if (!TRIGGER || !text) return false;
+  return text.trim().toLowerCase().startsWith(TRIGGER.toLowerCase());
+}
+
+function stripTrigger(text) {
+  const t = (text || "").trim();
+  return isAddressed(t) ? t.slice(TRIGGER.length).replace(/^[\s,:\-–]+/, "").trim() : t;
+}
+
+async function askAssistant(text, sender) {
+  try {
+    const res = await fetch(ASSISTANT_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(API_TOKEN ? { "x-api-token": API_TOKEN } : {}),
+      },
+      body: JSON.stringify({ text, sender }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.reply) {
+      console.error(`assistant HTTP ${res.status}:`, data?.error || "no reply");
+      return "אירעה שגיאה אצל העוזר המשפחתי, נסו שוב בעוד רגע.";
+    }
+    console.log(`💬 "${text}" מ-${sender} → ${data.applied?.length ?? 0} עדכונים`);
+    return data.reply;
+  } catch (err) {
+    console.error("assistant call failed:", err.message);
+    return "לא הצלחתי להתחבר לשרת המשפחה.";
   }
 }
 
@@ -216,20 +268,41 @@ async function start() {
     if (type !== "notify") return;
     for (const msg of messages) {
       const jid = msg.key.remoteJid || "";
-      if (!jid.endsWith("@g.us")) continue; // groups only
       if (msg.key.fromMe) continue;
+      if (jid === "status@broadcast") continue;
 
-      // Resolve group name for filtering / logging.
-      let groupName = jid;
-      try {
-        const meta = await sock.groupMetadata(jid);
-        groupName = meta.subject || jid;
-      } catch {
-        /* ignore */
+      const isGroup = jid.endsWith("@g.us");
+      let chatName = jid;
+
+      if (isGroup) {
+        try {
+          const meta = await sock.groupMetadata(jid);
+          chatName = meta.subject || jid;
+        } catch {
+          /* ignore */
+        }
+        if (GROUP_FILTER && !chatName.includes(GROUP_FILTER)) continue;
+      } else {
+        chatName = msg.pushName || jid.split("@")[0];
+        if (DM_ALLOW.length && !DM_ALLOW.some((n) => jid.startsWith(n))) {
+          console.log(`✋ מתעלם מהודעה פרטית מ-${jid}`);
+          continue;
+        }
       }
-      if (GROUP_FILTER && !groupName.includes(GROUP_FILTER)) continue;
 
       const text = extractText(msg);
+
+      // Conversation: any DM, or a group message that opens with the trigger.
+      if (text && (!isGroup || isAddressed(text))) {
+        const question = isGroup ? stripTrigger(text) : text;
+        if (question) {
+          await sock.sendPresenceUpdate("composing", jid);
+          const reply = await askAssistant(question, chatName);
+          await sock.sendMessage(jid, { text: reply }, { quoted: msg });
+          continue;
+        }
+      }
+
       let imageBase64 = null;
       let mime = null;
       if (msg.message?.imageMessage) {
@@ -248,7 +321,7 @@ async function start() {
       }
 
       if (text || imageBase64) {
-        await forward({ text, imageBase64, mime, sender: groupName });
+        await forward({ text, imageBase64, mime, sender: chatName });
       }
     }
   });

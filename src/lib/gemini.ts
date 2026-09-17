@@ -13,6 +13,17 @@ async function postWithTimeout(url: string, options: RequestInit): Promise<Respo
   }
 }
 
+// Hosted models return 429/503 under load often enough that a single failure
+// shouldn't reach the family as an error message.
+async function postWithRetry(url: string, options: RequestInit, attempts = 3): Promise<Response> {
+  let res = await postWithTimeout(url, options);
+  for (let i = 1; i < attempts && (res.status === 429 || res.status === 503); i++) {
+    await new Promise((r) => setTimeout(r, 1500 * i));
+    res = await postWithTimeout(url, options);
+  }
+  return res;
+}
+
 export interface Extraction {
   items: PlannedItem[];
   confidence: number;
@@ -154,7 +165,97 @@ async function extractWithOpenAI(
   return normalize(parseJsonLoose(raw), true);
 }
 
-function parseJsonLoose(raw: string): { items?: unknown[]; confidence?: number } {
+async function askGeminiJson(
+  system: string,
+  user: string,
+  key: string
+): Promise<Record<string, unknown>> {
+  const model = process.env.GEMINI_MODEL?.trim() || "gemini-flash-latest";
+  const res = await postWithRetry(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `${system}\n\n${user}` }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.3,
+          maxOutputTokens: 2048,
+        },
+      }),
+    }
+  );
+  if (!res.ok) throw new Error(`Gemini HTTP ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as {
+    candidates?: { content?: { parts?: { text?: string }[] } }[];
+  };
+  const raw = json.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!raw) throw new Error("Empty Gemini response");
+  return parseJsonLoose(raw);
+}
+
+async function askOpenAIJson(
+  system: string,
+  user: string,
+  cfg: { key: string; baseUrl: string; model: string }
+): Promise<Record<string, unknown>> {
+  const res = await postWithRetry(`${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.key}` },
+    body: JSON.stringify({
+      model: cfg.model,
+      messages: [
+        { role: "system", content: `${system}\nRespond with ONLY valid minified JSON.` },
+        { role: "user", content: user },
+      ],
+      temperature: 0.3,
+      max_tokens: 2048,
+    }),
+  });
+  if (!res.ok) throw new Error(`LLM HTTP ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const raw = json.choices?.[0]?.message?.content;
+  if (!raw) throw new Error("Empty LLM response");
+  return parseJsonLoose(raw);
+}
+
+// Generic JSON-mode prompt for callers that aren't doing item extraction (the
+// chat assistant). Tries Gemini first, then any OpenAI-compatible endpoint, so
+// a hosted model having a bad day doesn't take the bot down with it.
+export async function askJson(system: string, user: string): Promise<Record<string, unknown>> {
+  const gKey = process.env.GEMINI_API_KEY?.trim();
+  const llmKey = process.env.LLM_API_KEY?.trim();
+  const llmBase = process.env.LLM_BASE_URL?.trim();
+
+  const providers: (() => Promise<Record<string, unknown>>)[] = [];
+  if (gKey) providers.push(() => askGeminiJson(system, user, gKey));
+  if (llmKey && llmBase) {
+    providers.push(() =>
+      askOpenAIJson(system, user, {
+        key: llmKey,
+        baseUrl: llmBase,
+        model: process.env.LLM_MODEL?.trim() || "google/gemma-3n-e4b-it",
+      })
+    );
+  }
+  if (!providers.length) {
+    throw new Error("No LLM configured (set GEMINI_API_KEY or LLM_BASE_URL + LLM_API_KEY)");
+  }
+
+  let lastErr: unknown;
+  for (const provider of providers) {
+    try {
+      return await provider();
+    } catch (err) {
+      lastErr = err;
+      console.error("[assistant] provider failed, trying next:", err);
+    }
+  }
+  throw lastErr;
+}
+
+function parseJsonLoose(raw: string): Record<string, unknown> {
   try {
     return JSON.parse(raw);
   } catch {
@@ -190,7 +291,7 @@ function validateItem(raw: unknown): PlannedItem | null {
   };
 }
 
-function normalize(parsed: { items?: unknown[]; confidence?: number }, usedAi: boolean): Extraction {
+function normalize(parsed: Record<string, unknown>, usedAi: boolean): Extraction {
   const items = Array.isArray(parsed.items)
     ? parsed.items.map(validateItem).filter((x): x is PlannedItem => x !== null).slice(0, 80)
     : [];
