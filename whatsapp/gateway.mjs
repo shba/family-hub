@@ -296,9 +296,18 @@ async function start() {
       if (text && (!isGroup || isAddressed(text))) {
         const question = isGroup ? stripTrigger(text) : text;
         if (question) {
-          await sock.sendPresenceUpdate("composing", jid);
+          // The typing indicator is cosmetic - never let it cost us a reply.
+          try {
+            await sock.sendPresenceUpdate("composing", jid);
+          } catch {
+            /* ignore */
+          }
           const reply = await askAssistant(question, chatName);
-          await sock.sendMessage(jid, { text: reply }, { quoted: msg });
+          try {
+            await sock.sendMessage(jid, { text: reply }, { quoted: msg });
+          } catch (err) {
+            console.error("failed to send reply:", err?.message || err);
+          }
           continue;
         }
       }
