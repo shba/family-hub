@@ -25,7 +25,31 @@ if ! command -v docker >/dev/null; then
 fi
 if ! docker compose version >/dev/null 2>&1; then
   echo "==> Installing the Docker Compose plugin"
-  apt-get update && apt-get install -y docker-compose-plugin
+  # A broken third-party apt source shouldn't stop us trying the install.
+  apt-get update || echo "    (apt-get update reported errors, continuing)"
+  apt-get install -y docker-compose-plugin ||
+    apt-get install -y docker-compose-v2 ||
+    echo "    (could not install the plugin from apt)"
+fi
+
+# Without Compose v2 the "docker compose" below fails with an unhelpful
+# "unknown shorthand flag: 'd' in -d", so stop here with something useful.
+if ! docker compose version >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+
+Docker Compose v2 is missing, so the stack cannot start.
+
+  sudo apt-get install -y docker-compose-plugin
+
+If that fails, an apt source is probably broken. List the Docker ones with:
+
+  grep -rn download.docker.com /etc/apt/sources.list /etc/apt/sources.list.d/
+
+A correct entry points at ".../linux/ubuntu" - if one points at
+".../linux/ubuntu/dists/<codename>", apt appends "/dists/<codename>" again and
+gets a 404. Delete that entry, re-run apt-get update, then re-run this script.
+EOF
+  exit 1
 fi
 usermod -aG docker "$RUN_USER" || true
 systemctl enable --now docker
